@@ -70,6 +70,7 @@ impl Engine {
         let child = Command::new(env!("CARGO_BIN_EXE_omastorm-engine"))
             .env("OMASTORM_ARCHIVE", ARCHIVE)
             .env("XDG_RUNTIME_DIR", &root)
+            .env("XDG_DATA_HOME", root.join("share"))
             .stdout(Stdio::null())
             .spawn()
             .unwrap();
@@ -631,4 +632,69 @@ fn launcher_retries_a_slow_hello_within_its_startup_budget() {
     );
     drop(lock);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn export_report_writes_an_lcc_chart() {
+    let _serial = serial();
+    let engine = Engine::start();
+    let mut first = engine.connect();
+    assert_eq!(read(&mut first)["type"], "hello");
+    read(&mut first);
+    let mut second = engine.connect();
+    assert_eq!(read(&mut second)["type"], "hello");
+    read(&mut second);
+    send(
+        &mut first,
+        json!({
+            "type":"export_report",
+            "west":-98.0,
+            "south":34.5,
+            "east":-96.5,
+            "north":36.2,
+            "layers":["ref","basemap","rings"],
+            "width":480
+        }),
+    );
+    let report = read(&mut first);
+    assert_eq!(report["type"], "report_ready", "{report}");
+    assert_eq!(report["v"], 1);
+    assert_eq!(report["projection"], "lcc");
+    assert_eq!(report["width"], 480);
+    assert!(report["height"].as_u64().unwrap() > 200);
+    let path = report["path"].as_str().unwrap();
+    assert!(
+        path.starts_with("reports/") && path.ends_with(".png"),
+        "{path}"
+    );
+    let bytes = fs::read(engine.root.join("share/omastorm").join(path)).unwrap();
+    let decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
+    let mut reader = decoder.read_info().unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut pixels).unwrap();
+    assert_eq!(info.width, 480);
+    let painted = pixels
+        .chunks(4)
+        .filter(|p| p[0] < 230 || p[1] < 230)
+        .count();
+    assert!(painted > 500, "chart looks empty: {painted} painted");
+    send(
+        &mut first,
+        json!({
+            "type":"export_report",
+            "west":-98.0,
+            "south":34.5,
+            "east":-96.5,
+            "north":36.2,
+            "layers":["pressure"]
+        }),
+    );
+    let e = read(&mut first);
+    assert_eq!(e["type"], "error");
+    assert_eq!(e["command"], "export_report");
+    assert!(e["message"].as_str().unwrap().contains("pressure"), "{e}");
+    send(&mut second, json!({"type":"lock","enabled":true}));
+    let s = read(&mut second);
+    assert_eq!(s["type"], "state", "{s}");
+    assert_eq!(s["site"]["locked"], true);
 }

@@ -102,11 +102,16 @@ cannot be reached, with cached frames kept.
 | `Home` `End` | Oldest or newest frame |
 | `1` `2` `3` | Pixels, Glyphs, Stipple |
 | `w` | Show weak returns |
+| `e` | Export a Lambert chart of the view |
 | `?` | Keys sheet |
 | `Esc` | Close |
 
 Measured returns under 5 dBZ (insects, birds, ground clutter on a clear day)
 are hidden by default and the legend says so; `w` shows them.
+
+`e` exports a Lambert conformal conic chart of the view — reflectivity,
+geography, and range rings — to `~/.local/share/omastorm/reports/`. It is
+the measured sweep, not a forecast.
 
 ## Configuration
 

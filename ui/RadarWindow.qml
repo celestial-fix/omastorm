@@ -206,7 +206,7 @@ Item {
         if (!session && KeyMap.envFloor(Quickshell.env("OMASTORM_WEAK")) === undefined) weakFloor = floor;
     }
     Component.onCompleted: applySettings()
-    readonly property bool overlayOpen: picker.open || locationPicker.open || sheet.open
+    readonly property bool overlayOpen: picker.open || locationPicker.open || sheet.open || reportSheet.open
     function run(action) {
         switch (action) {
         case "search": treatmentMenu.close(); picker.show(""); break;
@@ -227,6 +227,12 @@ Item {
         case "newest": jump(true); break;
         case "pixels": case "glyphs": case "stipple": treatment = action.toUpperCase(); treatmentMenu.close(); break;
         case "weak": weakFloor = weakFloor === null ? configuredFloor : null; break;
+        case "export":
+            treatmentMenu.close();
+            if (sheet.open) sheet.close();
+            if (reportSheet.open) reportSheet.close();
+            else { reportSheet.box = map.viewBox(); reportSheet.show(); }
+            break;
         case "help": treatmentMenu.close(); if (sheet.open) sheet.close(); else sheet.show(); break;
         case "close": dismiss(); break;
         }
@@ -241,7 +247,7 @@ Item {
         function menu(open: bool): void { if (open) treatmentMenu.show(); else treatmentMenu.close(); }
         function field(name: string): string { var value = JSON.parse(status())[name]; return value === undefined ? "" : String(value); }
         function status(): string {
-            return JSON.stringify({sheet: sheet.open, menu: treatmentMenu.opened, treatment: app.treatment, weakFloor: app.weakFloor === null ? "off" : app.weakFloor, error: app.configError,
+            return JSON.stringify({sheet: sheet.open, report: reportSheet.open, menu: treatmentMenu.opened, treatment: app.treatment, weakFloor: app.weakFloor === null ? "off" : app.weakFloor, error: app.configError,
                                    span: Math.round(map.span * 10) / 10, lat: Math.round(map.centerLat * 1000) / 1000, lon: Math.round(map.centerLon * 1000) / 1000,
                                    locationSource: app.store.locationSource, needsLocation: app.store.needsLocation,
                                    site: app.siteId, locked: app.locked, lockSource: app.store.lockSource, outsideCoverage: app.outsideCoverage});
@@ -565,6 +571,21 @@ Item {
                     }
                     MouseArea { id: helpArea; anchors.fill: parent; hoverEnabled: true; onClicked: app.run("help") }
                 }
+                Rectangle {
+                    id: exportChip
+                    anchors.top: parent.top; anchors.right: helpChip.left; anchors.margins: 10
+                    width: exportRow.implicitWidth + 12; height: 22
+                    color: Qt.alpha(app.theme.background, .9)
+                    opacity: exportArea.containsMouse ? 1 : .7
+                    visible: !!app.state
+                    RowLayout {
+                        id: exportRow
+                        anchors.centerIn: parent
+                        spacing: 5
+                        LabelText { text: "E"; font.pixelSize: 10 }
+                    }
+                    MouseArea { id: exportArea; anchors.fill: parent; hoverEnabled: true; onClicked: app.run("export") }
+                }
                 // The engine's attribution verbatim while an osm tile is on
                 // screen (docs/protocol.md, state.basemap); Natural Earth otherwise.
                 LabelText {
@@ -884,6 +905,14 @@ Item {
             anchors.fill: parent
             theme: app.theme
             bindings: app.bindings
+            compact: win.compact
+            cardTop: layout.anchors.margins + mapFrame.y
+          }
+          ReportSheet {
+            id: reportSheet
+            anchors.fill: parent
+            theme: app.theme
+            engine: engine
             compact: win.compact
             cardTop: layout.anchors.margins + mapFrame.y
           }

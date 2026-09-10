@@ -91,6 +91,10 @@ call run help
 expect '? opens the sheet' true "$(field sheet)"
 call run help
 expect '? again closes it' false "$(field sheet)"
+call run export
+expect 'e opens the export sheet' true "$(field report)"
+call run export
+expect 'e again closes it' false "$(field report)"
 call menu true
 expect 'The chip opens the menu' true "$(field menu)"
 call run stipple

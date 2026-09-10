@@ -43,7 +43,7 @@ pub(crate) const COAST_WIDTH: f32 = 1.25;
 /// Geometry this far outside the tile still touches it through its stroke.
 const MARGIN_PX: f64 = 4.0;
 /// Coordinates in the blob are degrees times this (`build.rs`).
-const QUANTUM: f64 = 1e-5;
+pub(crate) const QUANTUM: f64 = 1e-5;
 /// Web Mercator's latitude limit: the square world.
 const MAX_LAT: f64 = 85.051_128_779_806_6;
 /// The Natural Earth release the embedded files come from: upstream master's
@@ -262,6 +262,44 @@ impl Geography {
     }
     fn scale(&self, z: u32) -> &Scale {
         &self.sets[usize::from(z >= DETAIL_FROM)]
+    }
+
+    /// Natural Earth polylines: `layer` 0 is boundaries, 1 is coast.
+    /// `fine` is the 1:10m network set; otherwise the 1:50m world set.
+    pub fn lines(
+        &self,
+        fine: bool,
+        layer: usize,
+    ) -> impl Iterator<Item = (&[(i32, i32)], [i32; 4])> + '_ {
+        self.sets[usize::from(fine)].layers[layer.min(1)]
+            .polylines
+            .iter()
+            .map(|line| (line.points.as_slice(), line.bounds))
+    }
+
+    /// Places whose coordinates sit inside the box, nearest first, capped.
+    pub fn places_in_box(
+        &self,
+        west: f64,
+        south: f64,
+        east: f64,
+        north: f64,
+        limit: usize,
+    ) -> Vec<Label> {
+        let mut scored: Vec<(u32, &Place)> = self
+            .places
+            .iter()
+            .filter(|place| {
+                place.lon >= west && place.lon <= east && place.lat >= south && place.lat <= north
+            })
+            .map(|place| (place.rank, place))
+            .collect();
+        scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.name.cmp(&b.1.name)));
+        scored
+            .into_iter()
+            .take(limit)
+            .map(|(_, place)| place.label())
+            .collect()
     }
 }
 

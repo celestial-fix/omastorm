@@ -70,6 +70,8 @@ usable under every condition.
 
 `src/catalog.rs` stores the newest 60 complete frames per station in
 `$XDG_CACHE_HOME/omastorm/frames/`: a SQLite WAL catalog and PNG files.
+`export_report` writes Lambert conformal conic charts under
+`$XDG_DATA_HOME/omastorm/reports/`.
 Entries retain scan geometry, times, and source provenance. The UI never reads
 this store. The timeline serves cached frames through new runtime textures.
 Playback loops complete frames over about ten seconds, bounded to 250 ms–1 s
