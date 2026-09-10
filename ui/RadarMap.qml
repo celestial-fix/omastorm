@@ -33,6 +33,7 @@ Item {
     property real radarOpacity: 1    // the radar layer alone; the basemap keeps its strength
     property bool locked: false      // the accent frame on the active marker and tag (DESIGN.md, markers)
     property var hazards: []         // aviation polygons from state.aviation.hazards
+    property var route: []           // open GRAMET track from state.aviation.gramet.coords
     // A frame with a scan time is radar to draw. The loading placeholder
     // (docs/protocol.md, frame.status: no scan time, one blank row) draws no
     // radar; tiles, labels, markers, and coverage still show, so a station
@@ -536,6 +537,19 @@ Item {
                         }
                     }
                 }
+            }
+        }
+        Shape {
+            visible: map.route && map.route.length >= 2
+            readonly property var vertices: (map.route || []).map(p =>
+                Qt.point((map.mercatorX(p.lon) - map.siteMx) * 100000,
+                         (map.mercatorY(p.lat) - map.siteMy) * 100000))
+            transform: Scale { xScale: map.worldPixels/100000; yScale: xScale }
+            ShapePath {
+                fillColor: "transparent"
+                strokeColor: Qt.alpha(map.theme.accent, 0.85)
+                strokeWidth: 2 * 100000/map.worldPixels
+                PathPolyline { path: parent.vertices }
             }
         }
         Repeater {

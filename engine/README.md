@@ -84,18 +84,33 @@ selects a station only when it lies within 460 km of the view centre.
 
 Live `view_center` fetches a briefing from NOAA's Aviation Weather Center:
 the nearest METAR in a 2° box, its TAF, and SIGMET / AIRMET / GAMET /
-GRAMET hazards in a 5° box. Archived mode and ordinary checks never fetch.
-`OMASTORM_AVIATION_URL` overrides the API root. The UI shows issued
-bulletin text and hazard polygons; it does not decode GRIB or NetCDF.
+issued GRAMET hazards in a 5° box. `set_gramet` builds a route GRAMET
+from origin and destination ICAO plus cruise TAS (optional flight
+level): AWC stationinfo plus Open-Meteo samples along the great-circle.
+Archived mode and ordinary checks never fetch. `OMASTORM_AVIATION_URL`
+overrides the API root. The UI shows issued bulletin text, hazard
+polygons, and the route polyline; it does not decode GRIB or NetCDF.
 
 ## Field layers
 
-Live `set_product` for `WIND`, `PRES`, or `WATER` fetches the current hour
-from Open-Meteo on a small grid around the view centre and rasterizes a
-polar sweep the existing shader draws. Surface is 10 m wind, MSLP, and
-2 m humidity; aloft is wind, isobar height, and humidity at 925–300 hPa.
-`set_source` chooses `now` (report / `best_match`), `gfs`, or `ecmwf`.
-`OMASTORM_FIELDS_URL` overrides the API root. Archived mode does not fetch.
+Live `set_product` for `WIND`, `PRES`, `WATER`, `TEMP`, or `PRECIP`
+fetches the current hour from Open-Meteo on a small grid around the view
+centre and rasterizes a polar sweep the existing shader draws. Surface is
+10 m wind, MSLP, 2 m humidity, 2 m temperature, and precipitation; aloft
+is wind, isobar height, and humidity at 925–300 hPa. `set_source` chooses
+`now` (report / `best_match`), `gfs`, or `ecmwf`. `OMASTORM_FIELDS_URL`
+overrides the API root. Archived mode does not fetch.
+
+## Historical reports
+
+`set_source` `cdo` or `meteostat` walks station archives in live mode.
+CDO uses NCEI daily-summaries in a box around the view (one day per
+`step_history`). Meteostat uses hourly dumps for the nearest stations
+(one hour per step). Both rasterize `TEMP` or `PRECIP` onto the field
+texture. Station lists and yearly CSVs cache under
+`$XDG_CACHE_HOME/omastorm/`. `OMASTORM_CDO_URL`,
+`OMASTORM_METEOSTAT_URL`, and `OMASTORM_METEOSTAT_STATIONS` override the
+roots.
 
 ## Local WRF
 

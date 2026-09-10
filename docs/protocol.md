@@ -44,13 +44,18 @@ It is small (a few KB) so clients replace rather than merge.
  "basemap":{"ne":{"version":"5.2.0-pre"},"osm":{"status":"ok","source":"OpenFreeMap",
             "version":"20260830_080001_pt","attribution":"OpenFreeMap © OpenMapTiles Data from OpenStreetMap"}},
  "aviation":{"status":"idle","attribution":"NOAA Aviation Weather Center",
-            "station":null,"metar":null,"taf":null,"hazards":[]},
+            "station":null,"metar":null,"taf":null,"hazards":[],
+            "gramet":{"status":"idle","origin":null,"destination":null,"cruiseKt":0,
+                      "flightLevel":350,"distanceKm":0,"eteMin":0,"raw":"","coords":[],
+                      "legs":[]}},
  "layers":{"attribution":"NOAA NEXRAD · Open-Meteo","sources":[
    {"id":"nexrad","name":"NEXRAD","kind":"sweep","group":"report","model":""},
    {"id":"now","name":"Open-Meteo now","kind":"analysis","group":"report","model":"best_match"},
    {"id":"gfs","name":"GFS","kind":"model","group":"forecast","model":"gfs_global"},
    {"id":"ecmwf","name":"ECMWF IFS","kind":"model","group":"forecast","model":"ecmwf_ifs025"},
-   {"id":"wrf","name":"WRF","kind":"local","group":"forecast","model":"wrf"}],
+   {"id":"wrf","name":"WRF","kind":"local","group":"forecast","model":"wrf"},
+   {"id":"cdo","name":"NOAA CDO","kind":"archive","group":"report","model":""},
+   {"id":"meteostat","name":"Meteostat","kind":"archive","group":"report","model":""}],
   "products":[
    {"code":"REF","name":"Reflectivity","units":"dBZ","kind":"sweep",
     "altitudes":[{"index":0,"name":"lowest cut","hpa":0}]},
@@ -63,6 +68,8 @@ It is small (a few KB) so clients replace rather than merge.
                     "preprocessMin":2,"integrateMin":40,"totalMin":46,
                     "totalMinLow":28,"totalMinHigh":85,"memoryMb":1600,
                     "summary":"About 28–85 min for 450×450 km at 9 km, 12 h…"}},
+ "history":{"status":"idle","source":"","time":"","step":"day",
+            "attribution":"NOAA NCEI Climate Data Online · Meteostat","stations":[]},
  "playing":false}
 ```
 
@@ -183,10 +190,22 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   was near the view), or `offline` (the feed could not be read). `station`
   is the nearest METAR; `metar` and `taf` carry `raw` bulletin text and
   `time` (observation or issue, ISO-8601). TAF may add `validFrom` /
-  `validTo`. `hazards` are SIGMET, AIRMET, GAMET, and GRAMET bulletins whose
-  polygons intersect the view, each with `kind`, `hazard`, `raw`, and
-  `coords` `[{lat,lon}, …]`. Radar values still never enter JSON; these
-  are issued bulletins. `OMASTORM_AVIATION_URL` overrides the API root.
+  `validTo`. `hazards` are SIGMET, AIRMET, GAMET, and issued GRAMET
+  bulletins whose polygons intersect the view, each with `kind`, `hazard`,
+  `raw`, and `coords` `[{lat,lon}, …]`. `aviation.gramet` is a separate
+  route briefing from `set_gramet` (origin and destination ICAO, cruise
+  TAS, optional flight level): `status`, airport fixes, `raw` text, an
+  open `coords` polyline, and sampled `legs`. It is not a GRIB file.
+  Radar values still never enter JSON; these are issued bulletins and
+  route text. `OMASTORM_AVIATION_URL` overrides the API root.
+- `history` is the CDO / Meteostat time cursor. Archived daemons and a
+  live daemon that has not selected those sources stay `status` `idle`.
+  After `set_source` `cdo` or `meteostat`, `loading` is replaced by `ok`
+  (stations in the view), `unavailable`, or `offline`. `time` is an ISO
+  date (`cdo`, one day) or hour (`meteostat`). `stations` are the
+  reports that built the field texture. `OMASTORM_CDO_URL`,
+  `OMASTORM_METEOSTAT_URL`, and `OMASTORM_METEOSTAT_STATIONS` override
+  the fetch roots.
 
 ## Client commands
 
@@ -199,6 +218,9 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 {"type":"play"}  {"type":"pause"}  {"type":"step","delta":-1}  {"type":"seek","id":"..."}
 {"type":"set_product","product":"REF","elevationIndex":0}
 {"type":"set_source","source":"gfs"}
+{"type":"set_gramet","origin":"SCEL","destination":"SCFA","cruiseKt":420,"flightLevel":350}
+{"type":"seek_history","time":"2020-01-15"}
+{"type":"step_history","delta":-1}
 {"type":"estimate_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
 {"type":"run_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
 {"type":"tiles_needed","z":11,"x0":469,"y0":807,"x1":472,"y1":810}
@@ -245,14 +267,27 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   `state.layers`. `REF` at index 0 is the Level II sweep. `WIND`, `PRES`,
   and `WATER` are live field layers; `elevationIndex` selects an altitude
   from that product's list (surface plus 925 / 850 / 700 / 500 / 300 hPa).
-  Field layers are polar rasters of the current Open-Meteo hour around the
-  view centre; `frame.kind` is `field` and `frame.altitudeName` names the
-  cut. Archived mode rejects field products. An unsupported selection
+  `TEMP` and `PRECIP` are surface field layers (Open-Meteo now/models, or
+  CDO / Meteostat station reports). Field layers are polar rasters around
+  the view centre; `frame.kind` is `field` and `frame.altitudeName` names
+  the cut. Archived mode rejects field products. An unsupported selection
   returns an `error` to its sender and retains the current frame.
 - `set_source` selects a layer source from `state.layers.sources`. `nexrad`
   is the Level II sweep (a report). `now` is Open-Meteo's latest analysis
   hour (`best_match`). `gfs` and `ecmwf` are forecast models. `wrf` is a
-  local Docker forecast; it does not start a run.
+  local Docker forecast; it does not start a run. `cdo` is NOAA NCEI
+  daily summaries (one day per step). `meteostat` is hourly station
+  dumps (one hour per step). Both are live-only report archives; they
+  open on `TEMP` unless `TEMP` or `PRECIP` is already selected.
+- `set_gramet` builds a live route GRAMET from four-letter ICAO origin
+  and destination, cruise TAS (80–550 kt), and optional flight level
+  (50–450, default 350). The engine resolves the airports from AWC
+  stationinfo and samples Open-Meteo along the great-circle. Archived
+  mode rejects it. A bad ICAO or TAS is an `error` to the sender.
+- `seek_history` jumps the CDO / Meteostat cursor to an ISO date or
+  hour. `step_history` moves `delta` days (`cdo`) or hours
+  (`meteostat`) and clamps to the archive window. Both need a history
+  source in live mode.
 - `estimate_wrf` fills `state.wrf.estimate` for the named centre and domain.
   `widthKm` / `heightKm` are the domain sides (the map span is a good
   default). Omit `dxKm` to pick a spacing from the span (3 / 9 / 15 km).

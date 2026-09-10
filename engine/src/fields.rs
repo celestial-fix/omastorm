@@ -41,6 +41,14 @@ const WATER_PALETTE: [&str; 8] = [
     "#3d4a3a", "#4f7a52", "#6fa36a", "#8fc47a", "#c9d96b", "#7eb8c9", "#4a88b8", "#2a5080",
 ];
 const WATER_BOUNDS: [i32; 9] = [0, 20, 40, 55, 70, 80, 90, 96, 101];
+const TEMP_PALETTE: [&str; 8] = [
+    "#2a3a8a", "#3d7ab0", "#4aa39a", "#8fc47a", "#c9c84a", "#e09a3e", "#d4653a", "#8a2a4a",
+];
+const TEMP_BOUNDS: [i32; 9] = [-30, -10, 0, 8, 16, 22, 28, 34, 45];
+const PRECIP_PALETTE: [&str; 8] = [
+    "#3d4a3a", "#4f7a52", "#6fa36a", "#8fc47a", "#7eb8c9", "#4a88b8", "#3d4a8a", "#5a2a6e",
+];
+const PRECIP_BOUNDS: [i32; 9] = [0, 1, 3, 6, 10, 20, 35, 55, 80];
 const PRES_PALETTE: [&str; 8] = [
     "#5a2a6e", "#3d4a8a", "#2a7ab0", "#4aa39a", "#c9c84a", "#e09a3e", "#d4653a", "#a33b4a",
 ];
@@ -98,7 +106,7 @@ pub struct Source {
     pub model: &'static str,
 }
 
-pub const SOURCES: [Source; 5] = [
+pub const SOURCES: [Source; 7] = [
     Source {
         id: "nexrad",
         name: "NEXRAD",
@@ -133,6 +141,20 @@ pub const SOURCES: [Source; 5] = [
         kind: "local",
         group: "forecast",
         model: "wrf",
+    },
+    Source {
+        id: "cdo",
+        name: "NOAA CDO",
+        kind: "archive",
+        group: "report",
+        model: "",
+    },
+    Source {
+        id: "meteostat",
+        name: "Meteostat",
+        kind: "archive",
+        group: "report",
+        model: "",
     },
 ];
 
@@ -188,14 +210,32 @@ pub fn layers() -> Layers {
                 name: "Water".into(),
                 units: "%".into(),
                 kind: "field".into(),
-                altitudes,
+                altitudes: altitudes.clone(),
+            },
+            LayerProduct {
+                code: "TEMP".into(),
+                name: "Temperature".into(),
+                units: "°C".into(),
+                kind: "field".into(),
+                altitudes: vec![altitudes[0].clone()],
+            },
+            LayerProduct {
+                code: "PRECIP".into(),
+                name: "Precipitation".into(),
+                units: "mm".into(),
+                kind: "field".into(),
+                altitudes: vec![altitudes[0].clone()],
             },
         ],
     }
 }
 
 pub fn is_field(product: &str) -> bool {
-    matches!(product, "WIND" | "PRES" | "WATER")
+    matches!(product, "WIND" | "PRES" | "WATER" | "TEMP" | "PRECIP")
+}
+
+pub fn is_history(id: &str) -> bool {
+    matches!(id, "cdo" | "meteostat")
 }
 
 pub fn source(id: &str) -> Option<Source> {
@@ -225,15 +265,17 @@ struct Cache {
     time: String,
 }
 
-#[derive(Clone)]
-struct Sample {
-    lat: f64,
-    lon: f64,
-    wind_kt: [Option<f64>; 6],
-    wind_dir: [Option<f64>; 6],
-    pressure_hpa: Option<f64>,
-    height_m: [Option<f64>; 6],
-    water_pct: [Option<f64>; 6],
+#[derive(Clone, Default)]
+pub(crate) struct Sample {
+    pub lat: f64,
+    pub lon: f64,
+    pub wind_kt: [Option<f64>; 6],
+    pub wind_dir: [Option<f64>; 6],
+    pub pressure_hpa: Option<f64>,
+    pub height_m: [Option<f64>; 6],
+    pub water_pct: [Option<f64>; 6],
+    pub temp_c: [Option<f64>; 6],
+    pub precip_mm: Option<f64>,
 }
 
 impl Client {
@@ -327,6 +369,8 @@ impl Client {
             "wind_direction_10m",
             "pressure_msl",
             "relative_humidity_2m",
+            "temperature_2m",
+            "precipitation",
             "wind_speed_925hPa",
             "wind_direction_925hPa",
             "relative_humidity_925hPa",
@@ -396,6 +440,10 @@ struct Hourly {
     pressure_msl: Vec<Option<f64>>,
     #[serde(default)]
     relative_humidity_2m: Vec<Option<f64>>,
+    #[serde(default)]
+    temperature_2m: Vec<Option<f64>>,
+    #[serde(default)]
+    precipitation: Vec<Option<f64>>,
     #[serde(default, rename = "wind_speed_925hPa")]
     wind_speed_925: Vec<Option<f64>>,
     #[serde(default, rename = "wind_direction_925hPa")]
@@ -489,6 +537,15 @@ fn parse_grid(bytes: &[u8], lats: &[f64], lons: &[f64]) -> io::Result<(Vec<Sampl
                 at(&hourly.humidity_500, hour),
                 at(&hourly.humidity_300, hour),
             ],
+            temp_c: [
+                at(&hourly.temperature_2m, hour),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            precip_mm: at(&hourly.precipitation, hour),
         });
     }
     Ok((samples, iso_hour(&time)))
@@ -520,7 +577,7 @@ fn iso_hour(text: &str) -> String {
     format!("{trimmed}Z")
 }
 
-fn raster(
+pub(crate) fn raster(
     samples: &[Sample],
     lat: f64,
     lon: f64,
@@ -605,6 +662,8 @@ fn vocabulary(
     match product {
         "WIND" => ("Wind", "kt", &WIND_PALETTE, &WIND_BOUNDS),
         "WATER" => ("Water", "%", &WATER_PALETTE, &WATER_BOUNDS),
+        "TEMP" => ("Temperature", "°C", &TEMP_PALETTE, &TEMP_BOUNDS),
+        "PRECIP" => ("Precipitation", "mm", &PRECIP_PALETTE, &PRECIP_BOUNDS),
         "PRES" if altitude.hpa == 0 => ("Pressure", "hPa", &PRES_PALETTE, &PRES_BOUNDS),
         _ => (
             "Pressure height",
@@ -642,6 +701,8 @@ fn interpolate(
         let value = match product {
             "WIND" => sample.wind_kt.get(level).copied().flatten(),
             "WATER" => sample.water_pct.get(level).copied().flatten(),
+            "TEMP" => sample.temp_c.get(level).copied().flatten(),
+            "PRECIP" => sample.precip_mm,
             "PRES" if level == 0 => sample.pressure_hpa,
             "PRES" => sample.height_m.get(level).copied().flatten(),
             _ => None,
@@ -693,7 +754,7 @@ mod tests {
     fn layers_name_wind_pressure_water_and_altitudes() {
         let layers = layers();
         let codes: Vec<_> = layers.products.iter().map(|p| p.code.as_str()).collect();
-        assert_eq!(codes, ["REF", "WIND", "PRES", "WATER"]);
+        assert_eq!(codes, ["REF", "WIND", "PRES", "WATER", "TEMP", "PRECIP"]);
         let groups: Vec<_> = layers.sources.iter().map(|s| s.group.as_str()).collect();
         assert_eq!(
             layers
@@ -701,11 +762,13 @@ mod tests {
                 .iter()
                 .map(|s| s.id.as_str())
                 .collect::<Vec<_>>(),
-            ["nexrad", "now", "gfs", "ecmwf", "wrf"]
+            ["nexrad", "now", "gfs", "ecmwf", "wrf", "cdo", "meteostat"]
         );
         assert_eq!(
             groups,
-            ["report", "report", "forecast", "forecast", "forecast"]
+            [
+                "report", "report", "forecast", "forecast", "forecast", "report", "report"
+            ]
         );
         let wind = layers.products.iter().find(|p| p.code == "WIND").unwrap();
         assert_eq!(wind.altitudes.len(), 6);
@@ -731,6 +794,7 @@ mod tests {
                 pressure_hpa: Some(1016.0),
                 height_m: [None, None, Some(1500.0), None, None, None],
                 water_pct: [Some(45.0), None, Some(70.0), None, None, None],
+                ..Sample::default()
             },
             Sample {
                 lat: -33.0,
@@ -740,6 +804,7 @@ mod tests {
                 pressure_hpa: Some(1012.0),
                 height_m: [None, None, Some(1480.0), None, None, None],
                 water_pct: [Some(40.0), None, Some(60.0), None, None, None],
+                ..Sample::default()
             },
         ];
         let (speed, dir) = interpolate(&samples, -33.45, -70.67, "WIND", 2);
@@ -761,6 +826,7 @@ mod tests {
             pressure_hpa: Some(1013.0),
             height_m: [Some(0.0); 6],
             water_pct: [Some(55.0); 6],
+            ..Sample::default()
         }];
         let (frame, texture, lut) = raster(
             &samples,

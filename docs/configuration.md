@@ -118,9 +118,12 @@ the machine's own state and weather files are not read unless
   (`+ =`), `zoom_out` (`-`), `reset` (`0`, the resolved location), `previous_frame` (`[`),
   `next_frame` (`]`), `play` (`Space`), `oldest` (`Home`), `newest` (`End`),
   `pixels` `glyphs` `stipple` (`1 2 3`), `layer_radar` (`Shift+R`),
-  `layer_wind` `layer_pressure` `layer_water` (`4 5 6`), `source_now`
+  `layer_wind` `layer_pressure` `layer_water` (`4 5 6`), `layer_temp`
+  (`7`), `layer_precip` (`8`), `source_now`
   (`Shift+O`), `source_gfs` (`Shift+G`), `source_ecmwf` (`Shift+E`),
-  `source_wrf` (`Shift+F`), `run_wrf` (`Shift+W`), `altitude_down`
+  `source_wrf` (`Shift+F`), `source_cdo` (`Shift+C`),
+  `source_meteostat` (`Shift+M`), `run_wrf` (`Shift+W`), `gramet`
+  (`Shift+A`), `altitude_down`
   `altitude_up` (`Shift+[` `Shift+]`), `weak` (`w`), `help` (`?`), `close`
   (`Escape`).
   A value that is not a quoted string, a sequence Qt cannot parse, an

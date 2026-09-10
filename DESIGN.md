@@ -102,17 +102,22 @@ configuration.
 
 A product is a texture, legend, units, timestamp, and source from the engine.
 Level II reflectivity is the radar layer (a report). Live mode also offers
-field layers — wind, pressure, and atmospheric water — from Open-Meteo
-**now** (latest analysis hour) or from forecast models (GFS, ECMWF IFS).
-Reports and forecasts stay labeled as such. A local WRF-ARW run is an
-opt-in forecast producer: the engine estimates wall time from domain area,
-grid spacing, forecast hours, and cores, then an explicit command may start
-the WRF Docker image on this machine. The engine rasterizes fields onto the
-same sweep texture the shader already samples; values still do not enter
-QML. Live mode may also carry an aviation briefing for the view: METAR
-(observed), TAF as issued bulletin text, and SIGMET / AIRMET / GAMET /
-GRAMET polygons. That briefing is not a drawn product. Raw GRIB / NetCDF
-files stay out of the UI; WRF wrfout stays in the cache directory.
+field layers — wind, pressure, atmospheric water, temperature, and
+precipitation — from Open-Meteo **now** (latest analysis hour), forecast
+models (GFS, ECMWF IFS), or historical station reports (NOAA CDO daily
+summaries and Meteostat hourly dumps). Reports and forecasts stay labeled
+as such. History sources carry a time cursor: a day on CDO, an hour on
+Meteostat. A local WRF-ARW run is an opt-in forecast producer: the engine
+estimates wall time from domain area, grid spacing, forecast hours, and
+cores, then an explicit command may start the WRF Docker image on this
+machine. The engine rasterizes fields onto the same sweep texture the
+shader already samples; values still do not enter QML. Live mode may also
+carry an aviation briefing for the view: METAR (observed), TAF as issued
+bulletin text, SIGMET / AIRMET / GAMET / issued GRAMET polygons, and a
+route GRAMET from origin and destination ICAO plus cruise TAS. That
+briefing is bulletin text and a polyline, not a drawn model field. Raw
+GRIB / NetCDF files stay out of the UI; WRF wrfout stays in the cache
+directory.
 
 The live poller follows the latest volume. `try_next` returning no chunk is
 normal between chunks, but 90 seconds with no chunk at all means the

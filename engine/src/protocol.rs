@@ -136,6 +136,8 @@ pub struct State {
     pub layers: Layers,
     /// Local WRF-ARW producer (`docs/protocol.md`). Idle until estimated or run.
     pub wrf: Wrf,
+    /// NOAA CDO / Meteostat historical reports (`docs/protocol.md`).
+    pub history: History,
     pub playing: bool,
 }
 
@@ -173,6 +175,8 @@ pub struct Aviation {
     pub metar: Option<Bulletin>,
     pub taf: Option<Bulletin>,
     pub hazards: Vec<Hazard>,
+    /// Route GRAMET from `set_gramet` (origin, destination, cruise TAS).
+    pub gramet: Gramet,
 }
 
 #[derive(Serialize, PartialEq, Clone, Copy, Debug)]
@@ -453,6 +457,69 @@ pub struct WrfEstimate {
     pub summary: String,
 }
 
+/// Route GRAMET: origin and destination ICAO, cruise TAS, and the sampled track.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Gramet {
+    pub status: AviationStatus,
+    pub origin: Option<GrametFix>,
+    pub destination: Option<GrametFix>,
+    pub cruise_kt: u32,
+    pub flight_level: u32,
+    pub distance_km: f64,
+    pub ete_min: u32,
+    pub raw: String,
+    pub coords: Vec<Point>,
+    pub legs: Vec<GrametLeg>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub message: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct GrametFix {
+    pub icao: String,
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GrametLeg {
+    pub dist_km: f64,
+    pub ete_min: u32,
+    pub lat: f64,
+    pub lon: f64,
+    pub wind_kt: f64,
+    pub wind_dir: f64,
+    pub temp_c: f64,
+    pub rh: f64,
+}
+
+/// Historical station reports (NOAA CDO / Meteostat) with a time cursor.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct History {
+    pub status: AviationStatus,
+    pub source: String,
+    pub time: String,
+    pub step: String,
+    pub attribution: String,
+    pub stations: Vec<HistoryStation>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub message: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryStation {
+    pub id: String,
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub distance_km: f64,
+}
+
 #[derive(Serialize, PartialEq, Clone, Debug)]
 pub struct LayerProduct {
     pub code: String,
@@ -515,6 +582,23 @@ pub enum Command {
     },
     SetSource {
         source: String,
+    },
+    /// Build a route GRAMET from origin and destination ICAO and cruise TAS.
+    #[serde(rename_all = "camelCase")]
+    SetGramet {
+        origin: String,
+        destination: String,
+        cruise_kt: u32,
+        #[serde(default)]
+        flight_level: u32,
+    },
+    /// Jump the CDO / Meteostat cursor to an ISO date or hour.
+    SeekHistory {
+        time: String,
+    },
+    /// Step the CDO / Meteostat cursor by whole days or hours.
+    StepHistory {
+        delta: i64,
     },
     /// Recompute the WRF wall-clock estimate for the view (`docs/protocol.md`).
     #[serde(rename_all = "camelCase")]

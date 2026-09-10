@@ -146,15 +146,20 @@ fn fixture_transport_and_shared_commands() {
             .is_empty()
     );
     assert_eq!(initial["layers"]["products"][1]["code"], "WIND");
+    assert_eq!(initial["layers"]["products"][4]["code"], "TEMP");
     assert_eq!(initial["layers"]["sources"][4]["id"], "wrf");
+    assert_eq!(initial["layers"]["sources"][5]["id"], "cdo");
+    assert_eq!(initial["layers"]["sources"][6]["id"], "meteostat");
     assert_eq!(initial["wrf"]["status"], "idle");
+    assert_eq!(initial["aviation"]["gramet"]["status"], "idle");
+    assert_eq!(initial["history"]["status"], "idle");
     assert!(
         initial["wrf"]["estimate"]["summary"]
             .as_str()
             .unwrap()
             .contains("min")
     );
-    assert!(initial.to_string().len() < 16000);
+    assert!(initial.to_string().len() < 20000);
     assert!(initial["frame"].get("values").is_none());
     // The frame is the lowest sweep decoded from the Level II fixture: a polar
     // texture with an azimuth lookup and gate geometry, and nothing else that
@@ -299,6 +304,31 @@ fn fixture_transport_and_shared_commands() {
     assert_eq!(e["type"], "error");
     assert_eq!(e["command"], "search_places");
     assert!(e["message"].as_str().unwrap().contains("lat"));
+    send(&mut first, json!({"type": "set_source", "source": "cdo"}));
+    let e = read(&mut first);
+    assert_eq!(e["type"], "error");
+    assert_eq!(e["command"], "set_source");
+    assert!(e["message"].as_str().unwrap().contains("live"));
+    send(
+        &mut first,
+        json!({
+            "type": "set_gramet",
+            "origin": "SCEL",
+            "destination": "SCFA",
+            "cruiseKt": 420
+        }),
+    );
+    let e = read(&mut first);
+    assert_eq!(e["type"], "error");
+    assert_eq!(e["command"], "set_gramet");
+    assert!(e["message"].as_str().unwrap().contains("live"));
+    send(
+        &mut first,
+        json!({"type": "seek_history", "time": "2020-01-15"}),
+    );
+    let e = read(&mut first);
+    assert_eq!(e["type"], "error");
+    assert_eq!(e["command"], "seek_history");
     // Still locked from above, a settle far from the station hands off to
     // nothing (the nearest there would go live and reach the network); the
     // other client's next state is the release.

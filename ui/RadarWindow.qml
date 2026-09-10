@@ -89,6 +89,8 @@ Item {
         }
     }
     readonly property var aviation: state && state.aviation ? state.aviation : null
+    readonly property var gramet: aviation && aviation.gramet ? aviation.gramet : null
+    readonly property var history: state && state.history ? state.history : null
     readonly property string aviationLine: {
         if (!aviation || aviation.status === "idle") return "";
         if (aviation.status === "loading") return "AVIATION · LOADING";
@@ -100,6 +102,26 @@ Item {
         var n = aviation.hazards ? aviation.hazards.length : 0;
         var hazards = n ? " · " + n + " HAZARD" + (n === 1 ? "" : "S") : "";
         return (id ? id + " · " : "") + cat + (raw || "BRIEFING") + hazards;
+    }
+    readonly property string grametLine: {
+        if (!gramet || gramet.status === "idle") return "";
+        if (gramet.status === "loading") return "GRAMET · LOADING";
+        if (gramet.status === "offline") return "GRAMET · OFFLINE";
+        if (gramet.status === "unavailable") return "GRAMET · NO ROUTE";
+        var o = gramet.origin && gramet.origin.icao ? gramet.origin.icao : "";
+        var d = gramet.destination && gramet.destination.icao ? gramet.destination.icao : "";
+        var route = o && d ? o + "–" + d : "ROUTE";
+        var tas = gramet.cruiseKt ? " " + gramet.cruiseKt + " KT" : "";
+        return "GRAMET · " + route + tas + (gramet.raw ? " · " + gramet.raw : "");
+    }
+    readonly property string historyLine: {
+        if (!history || history.status === "idle") return "";
+        var src = (history.source || layerSource || "archive").toUpperCase();
+        if (history.status === "loading") return src + " · " + (history.time || "") + " · LOADING";
+        if (history.status === "offline") return src + " · OFFLINE";
+        if (history.status === "unavailable") return src + " · " + (history.time || "") + " · NO STATIONS";
+        var n = history.stations ? history.stations.length : 0;
+        return src + " · " + (history.time || "") + " · " + n + " STATION" + (n === 1 ? "" : "S");
     }
     // Clock readings are the machine's local time; the wire is UTC. `zone`
     // appends the zone's abbreviation where the reading stands alone.
@@ -113,8 +135,14 @@ Item {
     readonly property var slots: Timeline.slots(frames)
     readonly property int currentSlot: scan ? slots.findIndex(s => s.id === scan.id) : -1
     function togglePlay() { if (frames.length > 1) engine.send({type: playing ? "pause" : "play"}); }
-    function step(delta) { if (frames.length > 1) engine.send({type: "step", delta: delta}); }
-    function jump(toNewest) { if (frames.length > 1) engine.send({type: "seek", id: frames[toNewest ? frames.length - 1 : 0].id}); }
+    function step(delta) {
+        if (app.historySource) { engine.send({type: "step_history", delta: delta}); return; }
+        if (frames.length > 1) engine.send({type: "step", delta: delta});
+    }
+    function jump(toNewest) {
+        if (app.historySource) { engine.send({type: "step_history", delta: toNewest ? 100000 : -100000}); return; }
+        if (frames.length > 1) engine.send({type: "seek", id: frames[toNewest ? frames.length - 1 : 0].id});
+    }
     readonly property int bands: scan ? scan.palette.length : 0
     function legendLabel(index) {
         var bounds = scan.bounds;
@@ -219,7 +247,7 @@ Item {
         if (!session && KeyMap.envFloor(Quickshell.env("OMASTORM_WEAK")) === undefined) weakFloor = floor;
     }
     Component.onCompleted: applySettings()
-    readonly property bool overlayOpen: picker.open || locationPicker.open || sheet.open
+    readonly property bool overlayOpen: picker.open || locationPicker.open || grametPicker.open || sheet.open
     function run(action) {
         switch (action) {
         case "search": treatmentMenu.close(); picker.show(""); break;
@@ -243,11 +271,16 @@ Item {
         case "layer_wind": setLayer("WIND", app.layerAltitude); break;
         case "layer_pressure": setLayer("PRES", app.layerAltitude); break;
         case "layer_water": setLayer("WATER", app.layerAltitude); break;
+        case "layer_temp": setLayer("TEMP", 0); break;
+        case "layer_precip": setLayer("PRECIP", 0); break;
         case "source_now": setSource("now"); break;
         case "source_gfs": setSource("gfs"); break;
         case "source_ecmwf": setSource("ecmwf"); break;
         case "source_wrf": setSource("wrf"); break;
+        case "source_cdo": setSource("cdo"); break;
+        case "source_meteostat": setSource("meteostat"); break;
         case "run_wrf": runWrf(); break;
+        case "gramet": treatmentMenu.close(); grametPicker.show(""); break;
         case "altitude_down": stepAltitude(-1); break;
         case "altitude_up": stepAltitude(1); break;
         case "weak": weakFloor = weakFloor === null ? configuredFloor : null; break;
@@ -293,9 +326,11 @@ Item {
     }
     property string selectedSource: "nexrad"
     readonly property string layerSource: selectedSource || (scan && scan.layerSource) || (scan && scan.kind === "field" ? "now" : "nexrad")
+    readonly property bool historySource: layerSource === "cdo" || layerSource === "meteostat"
     property int layerAltitude: 0
     function setLayer(product, altitude) {
         if (!state) return;
+        if (product === "REF") selectedSource = "nexrad";
         layerAltitude = product === "REF" ? 0 : Math.max(0, Number(altitude) || 0);
         engine.send({type: "set_product", product: product, elevationIndex: layerAltitude});
     }
@@ -579,6 +614,23 @@ Item {
                 font.pixelSize: 10
                 Layout.fillWidth: true
             }
+            LabelText {
+                visible: app.grametLine !== "" && !win.compact
+                text: app.grametLine
+                wrapMode: Text.Wrap
+                opacity: .75
+                font.pixelSize: 11
+                Layout.fillWidth: true
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run("gramet") }
+            }
+            LabelText {
+                visible: app.historyLine !== "" && !win.compact
+                text: app.historyLine
+                wrapMode: Text.Wrap
+                opacity: .75
+                font.pixelSize: 11
+                Layout.fillWidth: true
+            }
             RowLayout {
                 visible: !win.compact && !!app.state
                 spacing: 8
@@ -588,7 +640,9 @@ Item {
                         {id: "now", label: "NOW", group: "report", key: "source_now"},
                         {id: "gfs", label: "GFS", group: "forecast", key: "source_gfs"},
                         {id: "ecmwf", label: "ECMWF", group: "forecast", key: "source_ecmwf"},
-                        {id: "wrf", label: "WRF", group: "forecast", key: "source_wrf"}
+                        {id: "wrf", label: "WRF", group: "forecast", key: "source_wrf"},
+                        {id: "cdo", label: "CDO", group: "report", key: "source_cdo"},
+                        {id: "meteostat", label: "METEOSTAT", group: "report", key: "source_meteostat"}
                     ]
                     LabelText {
                         required property var modelData
@@ -618,7 +672,9 @@ Item {
                         {code: "REF", label: "RADAR", key: "layer_radar"},
                         {code: "WIND", label: "WIND", key: "layer_wind"},
                         {code: "PRES", label: "PRES", key: "layer_pressure"},
-                        {code: "WATER", label: "WATER", key: "layer_water"}
+                        {code: "WATER", label: "WATER", key: "layer_water"},
+                        {code: "TEMP", label: "TEMP", key: "layer_temp"},
+                        {code: "PRECIP", label: "PRECIP", key: "layer_precip"}
                     ]
                     LabelText {
                         required property var modelData
@@ -684,6 +740,7 @@ Item {
                     // The map asks for tiles when its camera settles and the
                     // engine answers this window alone, tile by tile.
                     hazards: app.aviation && app.aviation.hazards ? app.aviation.hazards : []
+                    route: app.gramet && app.gramet.coords ? app.gramet.coords : []
                     onTilesNeeded: (z, x0, y0, x1, y1) => engine.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
                 }
                 Connections { target: engine; function onTileReady(tile) { map.tileReady(tile); } }
@@ -714,7 +771,8 @@ Item {
                     text: {
                         var mapCredit = map.osmOnScreen && app.state && app.state.basemap ? app.state.basemap.osm.attribution : "NATURAL EARTH · OFFLINE";
                         var air = app.aviation && app.aviation.status !== "idle" ? " · " + app.aviation.attribution : "";
-                        return mapCredit + air;
+                        var hist = app.history && app.history.status !== "idle" ? " · " + app.history.attribution : "";
+                        return mapCredit + air + hist;
                     }
                     visible: !!app.scan
                     font.pixelSize: 10; opacity: .7
@@ -936,6 +994,16 @@ Item {
             compact: win.compact
             cardTop: layout.anchors.margins + mapFrame.y
             onChosen: site => app.choose(site)
+          }
+          GrametPicker {
+            id: grametPicker
+            anchors.fill: parent
+            theme: app.theme
+            compact: win.compact
+            cardTop: layout.anchors.margins + mapFrame.y
+            onSubmitted: (origin, destination, cruiseKt, flightLevel) => {
+                engine.send({type: "set_gramet", origin: origin, destination: destination, cruiseKt: cruiseKt, flightLevel: flightLevel});
+            }
           }
           LocationPicker {
             id: locationPicker

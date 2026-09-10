@@ -61,6 +61,7 @@ impl Client {
             metar: None,
             taf: None,
             hazards: Vec::new(),
+            gramet: crate::gramet::idle(),
         }
     }
 
@@ -72,6 +73,7 @@ impl Client {
             metar: None,
             taf: None,
             hazards: Vec::new(),
+            gramet: crate::gramet::idle(),
         }
     }
 
@@ -105,6 +107,7 @@ impl Client {
                     metar: None,
                     taf: None,
                     hazards: Vec::new(),
+                    gramet: crate::gramet::idle(),
                 }
             }
         }
@@ -164,6 +167,7 @@ impl Client {
             metar,
             taf,
             hazards,
+            gramet: crate::gramet::idle(),
         })
     }
 

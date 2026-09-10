@@ -1,6 +1,8 @@
 mod aviation;
 mod catalog;
 mod fields;
+mod gramet;
+mod history;
 mod live;
 mod osm;
 mod protocol;
@@ -504,6 +506,7 @@ fn initial_state(
         aviation: aviation::Client::idle(),
         layers: fields::layers(),
         wrf: wrf::idle(),
+        history: history::idle(),
         playing: false,
     }
 }
@@ -566,6 +569,9 @@ struct Shared {
     field_sel: Option<(String, String, u32)>,
     field_wake: Arc<Notify>,
     wrf_wake: Arc<Notify>,
+    gramet_req: Option<gramet::Request>,
+    gramet_wake: Arc<Notify>,
+    history_wake: Arc<Notify>,
 }
 impl Shared {
     fn snapshot(&mut self) -> String {
@@ -761,7 +767,9 @@ impl Shared {
             return false;
         }
         if self.state.aviation.status == protocol::AviationStatus::Idle {
+            let gramet = self.state.aviation.gramet.clone();
             self.state.aviation = aviation::Client::loading();
+            self.state.aviation.gramet = gramet;
             self.aviation_wake.notify_one();
             return true;
         }
@@ -773,6 +781,10 @@ impl Shared {
             return false;
         }
         self.field_center = Some((lat, lon));
+        if fields::is_history(&self.field_source) {
+            self.history_wake.notify_one();
+            return false;
+        }
         self.field_wake.notify_one();
         false
     }
@@ -817,7 +829,7 @@ impl Shared {
         if self.state.source != Source::Live {
             return (
                 false,
-                Some("Wind, pressure, and water layers are available in live mode.".into()),
+                Some("Field layers are available in live mode.".into()),
             );
         }
         if self.field_source == "nexrad" || self.field_source.is_empty() {
@@ -839,6 +851,16 @@ impl Shared {
         if self.field_center.is_none() {
             self.field_center = Some((self.state.frame.site.lat, self.state.frame.site.lon));
         }
+        if fields::is_history(&self.field_source) {
+            let time = if self.state.history.time.is_empty() {
+                history::default_time(&self.field_source)
+            } else {
+                self.state.history.time.clone()
+            };
+            self.state.history = history::loading(&self.field_source, &time);
+            self.history_wake.notify_one();
+            return (true, None);
+        }
         self.field_wake.notify_one();
         (false, None)
     }
@@ -858,6 +880,24 @@ impl Shared {
                 let est = self.state.wrf.estimate.clone();
                 self.state.wrf.message = est.summary.clone();
                 (true, None)
+            }
+            "archive" => {
+                if self.state.source != Source::Live {
+                    return (
+                        false,
+                        Some("CDO and Meteostat records are available in live mode.".into()),
+                    );
+                }
+                self.field_source = spec.id.into();
+                let time = history::default_time(spec.id);
+                self.state.history = history::loading(spec.id, &time);
+                let product = match &self.field_sel {
+                    Some((_, product, _)) if product == "TEMP" || product == "PRECIP" => {
+                        product.clone()
+                    }
+                    _ => "TEMP".into(),
+                };
+                self.set_layer(&product, 0)
             }
             _ if fields::is_model(spec.id) => {
                 if self.state.source != Source::Live {
@@ -930,6 +970,60 @@ impl Shared {
         // The script is started from the command handler after broadcast so
         // the UI sees the estimate before Docker work begins.
         (true, None)
+    }
+    fn set_gramet(
+        &mut self,
+        origin: &str,
+        destination: &str,
+        cruise_kt: u32,
+        flight_level: u32,
+    ) -> (bool, Option<String>) {
+        if self.state.source != Source::Live {
+            return (false, Some("GRAMET is available in live mode.".into()));
+        }
+        let request = match gramet::parse_request(origin, destination, cruise_kt, flight_level) {
+            Ok(request) => request,
+            Err(message) => return (false, Some(message)),
+        };
+        self.gramet_req = Some(request.clone());
+        self.state.aviation.gramet = gramet::loading(&request);
+        self.gramet_wake.notify_one();
+        (true, None)
+    }
+    fn seek_history(&mut self, time: &str) -> (bool, Option<String>) {
+        if !fields::is_history(&self.field_source) {
+            return (
+                false,
+                Some("History seek needs the CDO or Meteostat source.".into()),
+            );
+        }
+        if self.state.source != Source::Live {
+            return (
+                false,
+                Some("CDO and Meteostat records are available in live mode.".into()),
+            );
+        }
+        let time = history::normalize_time(&self.field_source, time);
+        self.state.history = history::loading(&self.field_source, &time);
+        self.history_wake.notify_one();
+        (true, None)
+    }
+    fn step_history(&mut self, delta: i64) -> (bool, Option<String>) {
+        if !fields::is_history(&self.field_source) {
+            return (
+                false,
+                Some("History step needs the CDO or Meteostat source.".into()),
+            );
+        }
+        let time = if self.state.history.time.is_empty() {
+            history::default_time(&self.field_source)
+        } else {
+            self.state.history.time.clone()
+        };
+        match history::step_time(&self.field_source, &time, delta) {
+            Ok(next) => self.seek_history(&next),
+            Err(message) => (false, Some(message)),
+        }
     }
     /// Keep an empty-station placeholder sited on the view so map scale
     /// follows the place the user chose, not the CONUS centroid.
@@ -1173,6 +1267,14 @@ impl Shared {
                 }
                 result
             }
+            Command::SetGramet {
+                origin,
+                destination,
+                cruise_kt,
+                flight_level,
+            } => self.set_gramet(&origin, &destination, cruise_kt, flight_level),
+            Command::SeekHistory { time } => self.seek_history(&time),
+            Command::StepHistory { delta } => self.step_history(delta),
             // Tile requests and place search are answered to the sender, not state.
             Command::TilesNeeded { .. } | Command::SearchPlaces { .. } | Command::Unsupported => {
                 return None;
@@ -1294,6 +1396,8 @@ async fn aviation_loop(
         if shared.state.source != Source::Live {
             continue;
         }
+        let mut briefing = briefing;
+        briefing.gramet = shared.state.aviation.gramet.clone();
         if set(&mut shared.state.aviation, briefing) {
             shared.broadcast();
         }
@@ -1309,7 +1413,9 @@ async fn field_loop(shared: Arc<Mutex<Shared>>, client: Arc<fields::Client>, wak
                 continue;
             }
             match (shared.field_center, shared.field_sel.clone()) {
-                (Some(center), Some(sel)) if sel.0 != "wrf" => (center, sel),
+                (Some(center), Some(sel)) if sel.0 != "wrf" && !fields::is_history(&sel.0) => {
+                    (center, sel)
+                }
                 _ => continue,
             }
         };
@@ -1375,6 +1481,80 @@ async fn wrf_loop(shared: Arc<Mutex<Shared>>, wake: Arc<Notify>) {
             }
         }
         shared.broadcast();
+    }
+}
+async fn gramet_loop(shared: Arc<Mutex<Shared>>, client: Arc<gramet::Client>, wake: Arc<Notify>) {
+    loop {
+        wake.notified().await;
+        sleep(Duration::from_millis(250)).await;
+        let request = {
+            let shared = shared.lock().unwrap();
+            if shared.state.source != Source::Live {
+                continue;
+            }
+            match shared.gramet_req.clone() {
+                Some(request) => request,
+                None => continue,
+            }
+        };
+        let gramet = client.fetch(&request).await;
+        let mut shared = shared.lock().unwrap();
+        if shared.gramet_req.as_ref() != Some(&request) || shared.state.source != Source::Live {
+            continue;
+        }
+        if set(&mut shared.state.aviation.gramet, gramet) {
+            shared.broadcast();
+        }
+    }
+}
+async fn history_loop(shared: Arc<Mutex<Shared>>, client: Arc<history::Client>, wake: Arc<Notify>) {
+    loop {
+        wake.notified().await;
+        sleep(Duration::from_millis(250)).await;
+        let (center, source, time, product) = {
+            let shared = shared.lock().unwrap();
+            if shared.state.source != Source::Live || !fields::is_history(&shared.field_source) {
+                continue;
+            }
+            let Some(center) = shared.field_center else {
+                continue;
+            };
+            let product = shared
+                .field_sel
+                .as_ref()
+                .map(|sel| sel.1.clone())
+                .unwrap_or_else(|| "TEMP".into());
+            let time = if shared.state.history.time.is_empty() {
+                history::default_time(&shared.field_source)
+            } else {
+                shared.state.history.time.clone()
+            };
+            (center, shared.field_source.clone(), time, product)
+        };
+        match client
+            .fetch(center.0, center.1, &source, &time, &product)
+            .await
+        {
+            Ok((briefing, frame, texture, lut)) => {
+                let mut shared = shared.lock().unwrap();
+                if shared.field_source != source || shared.state.source != Source::Live {
+                    continue;
+                }
+                if set(&mut shared.state.history, briefing)
+                    && let Err(e) = shared.show(frame, &texture, &lut)
+                {
+                    eprintln!("History layer: {e}");
+                }
+                shared.broadcast();
+            }
+            Err(e) => {
+                let mut shared = shared.lock().unwrap();
+                shared.state.history.status = protocol::AviationStatus::Offline;
+                shared.state.history.message = e.to_string();
+                shared.broadcast();
+                eprintln!("History layer: {e}");
+            }
+        }
     }
 }
 
@@ -2043,6 +2223,10 @@ fn serve(dir: PathBuf) -> io::Result<()> {
     let field_wake = Arc::new(Notify::new());
     let field_client = Arc::new(fields::Client::open()?);
     let wrf_wake = Arc::new(Notify::new());
+    let gramet_wake = Arc::new(Notify::new());
+    let gramet_client = Arc::new(gramet::Client::open()?);
+    let history_wake = Arc::new(Notify::new());
+    let history_client = Arc::new(history::Client::open()?);
     let shared = Arc::new(Mutex::new(Shared {
         state: initial_state(frame, osm.info(), source, status),
         tiles: tile_store,
@@ -2068,6 +2252,9 @@ fn serve(dir: PathBuf) -> io::Result<()> {
         field_sel: None,
         field_wake: field_wake.clone(),
         wrf_wake: wrf_wake.clone(),
+        gramet_req: None,
+        gramet_wake: gramet_wake.clone(),
+        history_wake: history_wake.clone(),
     }));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -2086,6 +2273,8 @@ fn serve(dir: PathBuf) -> io::Result<()> {
     ));
     runtime.spawn(field_loop(shared.clone(), field_client, field_wake));
     runtime.spawn(wrf_loop(shared.clone(), wrf_wake));
+    runtime.spawn(gramet_loop(shared.clone(), gramet_client, gramet_wake));
+    runtime.spawn(history_loop(shared.clone(), history_client, history_wake));
     let cleanup_shared = shared.clone();
     runtime.spawn(async move {
         let mut retirement = Retirement::default();
