@@ -82,10 +82,11 @@ rewrite it to match a new decode by accident. Capture scripts write images
 under `review/` for visual review; those stay out of git. Regenerate them when
 the picture changed, and include the captures with the review.
 
-Honor [DESIGN.md](DESIGN.md): actual scan times, no gridded forecast
-products, chrome from the Omarchy theme, radar color only from
-`frame.palette`. TAF, GAMET, and GRAMET are issued bulletin text, not a
-model field.
+Honor [DESIGN.md](DESIGN.md): actual scan times, chrome from the Omarchy
+theme, radar color only from `frame.palette`. TAF, GAMET, and GRAMET are
+issued bulletin text, not a model field. Open-Meteo and WRF fields are
+engine-rasterized textures; raw GRIB / NetCDF stay out of the UI. Local
+WRF is an explicit script/Docker run, never ordinary `run.sh`.
 
 ## Verify and submit
 

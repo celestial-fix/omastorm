@@ -145,7 +145,16 @@ fn fixture_transport_and_shared_commands() {
             .unwrap()
             .is_empty()
     );
-    assert!(initial.to_string().len() < 4000);
+    assert_eq!(initial["layers"]["products"][1]["code"], "WIND");
+    assert_eq!(initial["layers"]["sources"][4]["id"], "wrf");
+    assert_eq!(initial["wrf"]["status"], "idle");
+    assert!(
+        initial["wrf"]["estimate"]["summary"]
+            .as_str()
+            .unwrap()
+            .contains("min")
+    );
+    assert!(initial.to_string().len() < 16000);
     assert!(initial["frame"].get("values").is_none());
     // The frame is the lowest sweep decoded from the Level II fixture: a polar
     // texture with an azimuth lookup and gate geometry, and nothing else that

@@ -239,6 +239,17 @@ Item {
         case "oldest": jump(false); break;
         case "newest": jump(true); break;
         case "pixels": case "glyphs": case "stipple": treatment = action.toUpperCase(); treatmentMenu.close(); break;
+        case "layer_radar": setLayer("REF", 0); break;
+        case "layer_wind": setLayer("WIND", app.layerAltitude); break;
+        case "layer_pressure": setLayer("PRES", app.layerAltitude); break;
+        case "layer_water": setLayer("WATER", app.layerAltitude); break;
+        case "source_now": setSource("now"); break;
+        case "source_gfs": setSource("gfs"); break;
+        case "source_ecmwf": setSource("ecmwf"); break;
+        case "source_wrf": setSource("wrf"); break;
+        case "run_wrf": runWrf(); break;
+        case "altitude_down": stepAltitude(-1); break;
+        case "altitude_up": stepAltitude(1); break;
         case "weak": weakFloor = weakFloor === null ? configuredFloor : null; break;
         case "help": treatmentMenu.close(); if (sheet.open) sheet.close(); else sheet.show(); break;
         case "close": dismiss(); break;
@@ -279,6 +290,36 @@ Item {
     function resetView() {
         store.resetView();
         applyView();
+    }
+    property string selectedSource: "nexrad"
+    readonly property string layerSource: selectedSource || (scan && scan.layerSource) || (scan && scan.kind === "field" ? "now" : "nexrad")
+    property int layerAltitude: 0
+    function setLayer(product, altitude) {
+        if (!state) return;
+        layerAltitude = product === "REF" ? 0 : Math.max(0, Number(altitude) || 0);
+        engine.send({type: "set_product", product: product, elevationIndex: layerAltitude});
+    }
+    function wrfSpan() { return Math.round(Math.min(map.maxSpan, Math.max(80, map.span))); }
+    function setSource(id) {
+        if (!state) return;
+        selectedSource = id;
+        engine.send({type: "set_source", source: id});
+        if (id === "wrf") {
+            engine.send({type: "estimate_wrf", lat: map.centerLat, lon: map.centerLon, widthKm: wrfSpan(), heightKm: wrfSpan()});
+        }
+    }
+    function runWrf() {
+        if (!state) return;
+        engine.send({type: "run_wrf", lat: map.centerLat, lon: map.centerLon, widthKm: wrfSpan(), heightKm: wrfSpan()});
+    }
+    function stepAltitude(delta) {
+        if (!state || !state.layers) return;
+        var product = scan && scan.kind === "field" ? scan.product : "";
+        if (!product) return;
+        var spec = state.layers.products.find(p => p.code === product);
+        if (!spec || !spec.altitudes.length) return;
+        var next = Math.max(0, Math.min(spec.altitudes.length - 1, layerAltitude + delta));
+        setLayer(product, next);
     }
     function nearest() {
         var s = map.nearest();
@@ -493,7 +534,9 @@ Item {
                     Layout.leftMargin: 10
                 }
                 Item { Layout.fillWidth: true }
-                LabelText { text: !app.scan ? "" : app.scan.productName.toUpperCase() + (app.scan.scanTime ? " / " + app.scan.elevationDeg.toFixed(1) + "°" : "") }
+                LabelText { text: !app.scan ? "" : app.scan.productName.toUpperCase() + (app.scan.kind === "field"
+                    ? (app.scan.altitudeName ? " / " + app.scan.altitudeName.toUpperCase() : "")
+                    : (app.scan.scanTime ? " / " + app.scan.elevationDeg.toFixed(1) + "°" : "")) }
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -535,6 +578,69 @@ Item {
                 opacity: .55
                 font.pixelSize: 10
                 Layout.fillWidth: true
+            }
+            RowLayout {
+                visible: !win.compact && !!app.state
+                spacing: 8
+                Repeater {
+                    model: [
+                        {id: "nexrad", label: "NEXRAD", group: "report", key: "layer_radar"},
+                        {id: "now", label: "NOW", group: "report", key: "source_now"},
+                        {id: "gfs", label: "GFS", group: "forecast", key: "source_gfs"},
+                        {id: "ecmwf", label: "ECMWF", group: "forecast", key: "source_ecmwf"},
+                        {id: "wrf", label: "WRF", group: "forecast", key: "source_wrf"}
+                    ]
+                    LabelText {
+                        required property var modelData
+                        text: modelData.label
+                        font.pixelSize: 10
+                        font.letterSpacing: 1
+                        color: app.layerSource === modelData.id ? app.theme.accent : app.theme.foreground
+                        opacity: app.layerSource === modelData.id ? 1 : .55
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run(modelData.key) }
+                    }
+                }
+            }
+            LabelText {
+                visible: !win.compact && !!app.state && !!app.state.wrf && !!app.state.wrf.estimate
+                text: (app.state.wrf.status && app.state.wrf.status !== "idle" ? app.state.wrf.status.replace("_", " ").toUpperCase() + " · " : "WRF · ") + app.state.wrf.estimate.summary
+                wrapMode: Text.Wrap
+                opacity: .55
+                font.pixelSize: 10
+                Layout.fillWidth: true
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run("run_wrf") }
+            }
+            RowLayout {
+                visible: !win.compact && !!app.state
+                spacing: 8
+                Repeater {
+                    model: [
+                        {code: "REF", label: "RADAR", key: "layer_radar"},
+                        {code: "WIND", label: "WIND", key: "layer_wind"},
+                        {code: "PRES", label: "PRES", key: "layer_pressure"},
+                        {code: "WATER", label: "WATER", key: "layer_water"}
+                    ]
+                    LabelText {
+                        required property var modelData
+                        text: modelData.label
+                        font.pixelSize: 10
+                        font.letterSpacing: 1
+                        color: app.scan && app.scan.product === modelData.code ? app.theme.accent : app.theme.foreground
+                        opacity: app.scan && app.scan.product === modelData.code ? 1 : .55
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run(modelData.key) }
+                    }
+                }
+                LabelText {
+                    visible: !!app.scan && app.scan.kind === "field"
+                    text: "ALT − / +"
+                    font.pixelSize: 10
+                    opacity: .55
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        onClicked: mouse => app.stepAltitude(mouse.button === Qt.RightButton ? -1 : 1)
+                    }
+                }
             }
             Rectangle {
                 id: mapFrame

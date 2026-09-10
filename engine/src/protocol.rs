@@ -132,6 +132,10 @@ pub struct State {
     pub basemap: Basemap,
     /// Aviation briefing for the last settled view centre (`docs/protocol.md`).
     pub aviation: Aviation,
+    /// Products and altitudes the engine can draw (`docs/protocol.md`).
+    pub layers: Layers,
+    /// Local WRF-ARW producer (`docs/protocol.md`). Idle until estimated or run.
+    pub wrf: Wrf,
     pub playing: bool,
 }
 
@@ -366,6 +370,103 @@ pub struct Frame {
     pub site: Geometry,
     pub palette: Vec<String>,
     pub bounds: Vec<i32>,
+    /// `sweep` (Level II) or `field` (wind / pressure / water). Empty is sweep.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub altitude_hpa: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub altitude_name: String,
+    /// `nexrad` (empty on Level II fixtures), `gfs`, or `ecmwf`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub layer_source: String,
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
+/// The products, altitudes, and sources `set_product` / `set_source` accept.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct Layers {
+    pub attribution: String,
+    pub sources: Vec<LayerSource>,
+    pub products: Vec<LayerProduct>,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct LayerSource {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    /// `report` (observations / now) or `forecast` (NWP, including local WRF).
+    pub group: String,
+    pub model: String,
+}
+
+/// Local WRF run status and the last wall-clock estimate.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Wrf {
+    pub status: WrfStatus,
+    pub image: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub message: String,
+    pub estimate: WrfEstimate,
+}
+
+#[derive(Serialize, PartialEq, Clone, Copy, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum WrfStatus {
+    Idle,
+    MissingDocker,
+    Queued,
+    Running,
+    Ok,
+    Failed,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WrfEstimate {
+    pub width_km: u32,
+    pub height_km: u32,
+    pub area_km2: u32,
+    pub dx_km: f64,
+    pub hours: u32,
+    pub cores: u32,
+    pub levels: u32,
+    pub nx: u32,
+    pub ny: u32,
+    pub cells: u32,
+    pub dt_sec: f64,
+    pub steps: u32,
+    pub grib_files: u32,
+    pub download_min: u32,
+    pub preprocess_min: u32,
+    pub integrate_min: u32,
+    pub total_min: u32,
+    pub total_min_low: u32,
+    pub total_min_high: u32,
+    pub memory_mb: u32,
+    pub summary: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct LayerProduct {
+    pub code: String,
+    pub name: String,
+    pub units: String,
+    pub kind: String,
+    pub altitudes: Vec<LayerAltitude>,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct LayerAltitude {
+    pub index: u32,
+    pub name: String,
+    pub hpa: u32,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Copy, Debug)]
@@ -411,6 +512,41 @@ pub enum Command {
     SetProduct {
         product: String,
         elevation_index: u32,
+    },
+    SetSource {
+        source: String,
+    },
+    /// Recompute the WRF wall-clock estimate for the view (`docs/protocol.md`).
+    #[serde(rename_all = "camelCase")]
+    EstimateWrf {
+        lat: f64,
+        lon: f64,
+        #[serde(default)]
+        width_km: f64,
+        #[serde(default)]
+        height_km: f64,
+        #[serde(default)]
+        dx_km: f64,
+        #[serde(default)]
+        hours: u32,
+        #[serde(default)]
+        cores: u32,
+    },
+    /// Start a local WRF Docker run for the last estimate (live only).
+    #[serde(rename_all = "camelCase")]
+    RunWrf {
+        lat: f64,
+        lon: f64,
+        #[serde(default)]
+        width_km: f64,
+        #[serde(default)]
+        height_km: f64,
+        #[serde(default)]
+        dx_km: f64,
+        #[serde(default)]
+        hours: u32,
+        #[serde(default)]
+        cores: u32,
     },
     /// The visible inclusive tile rectangle at one zoom, at most 64 tiles
     /// Answered tile by tile with `tile_ready` to the sender.

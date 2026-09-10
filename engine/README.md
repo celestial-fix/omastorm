@@ -88,6 +88,28 @@ GRAMET hazards in a 5° box. Archived mode and ordinary checks never fetch.
 `OMASTORM_AVIATION_URL` overrides the API root. The UI shows issued
 bulletin text and hazard polygons; it does not decode GRIB or NetCDF.
 
+## Field layers
+
+Live `set_product` for `WIND`, `PRES`, or `WATER` fetches the current hour
+from Open-Meteo on a small grid around the view centre and rasterizes a
+polar sweep the existing shader draws. Surface is 10 m wind, MSLP, and
+2 m humidity; aloft is wind, isobar height, and humidity at 925–300 hPa.
+`set_source` chooses `now` (report / `best_match`), `gfs`, or `ecmwf`.
+`OMASTORM_FIELDS_URL` overrides the API root. Archived mode does not fetch.
+
+## Local WRF
+
+`estimate_wrf` / `run_wrf` drive `scripts/wrf-forecast.sh`. The estimate
+uses domain area, Δx, forecast length, vertical levels, and CPU cores.
+Integration time is pinned to a 450×450 km / 15 km / 33-level / 6 h / 4
+core reference (~10 min of `wrf.exe`); it scales with cells × levels ×
+timesteps / (cores × efficiency). Timesteps follow dt ≈ 6 s per km of
+Δx, so a finer grid is about Δx⁻³ more expensive. Download and WPS/real
+are added separately. The band is 0.6×–1.8× that total. Ordinary
+`run.sh` never starts Docker. `OMASTORM_WRF_IMAGE` names the container
+(default `ncar/wrf_tutorial:latest`). Geography belongs in
+`OMASTORM_WRF_GEOG`. Work stays under `$XDG_CACHE_HOME/omastorm/wrf/`.
+
 ## Basemap
 
 `build.rs` converts Natural Earth lines to a compact polyline blob and embeds

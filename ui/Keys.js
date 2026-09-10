@@ -29,6 +29,17 @@ var ACTIONS = [
     { id: "glyphs", keys: "2" },
     { id: "stipple", keys: "3" },
     { id: "weak", keys: "w" },
+    { id: "layer_radar", keys: "Shift+R" },
+    { id: "layer_wind", keys: "4" },
+    { id: "layer_pressure", keys: "5" },
+    { id: "layer_water", keys: "6" },
+    { id: "source_now", keys: "Shift+O" },
+    { id: "source_gfs", keys: "Shift+G" },
+    { id: "source_ecmwf", keys: "Shift+E" },
+    { id: "source_wrf", keys: "Shift+F" },
+    { id: "run_wrf", keys: "Shift+W" },
+    { id: "altitude_down", keys: "Shift+[" },
+    { id: "altitude_up", keys: "Shift+]" },
     { id: "help", keys: "?" },
     { id: "close", keys: "Escape" }
 ];
@@ -47,6 +58,10 @@ var ROWS = [
      { label: "play / pause", actions: ["play"] },
      { label: "oldest / newest frame", actions: ["oldest", "newest"] },
      { label: "Pixels, Glyphs, Stipple", actions: ["pixels", "glyphs", "stipple"] },
+     { label: "radar, wind, pressure, water", actions: ["layer_radar", "layer_wind", "layer_pressure", "layer_water"] },
+     { label: "now, GFS, ECMWF, WRF", actions: ["source_now", "source_gfs", "source_ecmwf", "source_wrf"] },
+     { label: "run local WRF", actions: ["run_wrf"] },
+     { label: "layer altitude", actions: ["altitude_down", "altitude_up"] },
      { label: "weak returns: hide / show", actions: ["weak"] },
      { label: "this sheet · esc closes", actions: ["help"] }]
 ];

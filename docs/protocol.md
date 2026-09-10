@@ -45,6 +45,24 @@ It is small (a few KB) so clients replace rather than merge.
             "version":"20260830_080001_pt","attribution":"OpenFreeMap © OpenMapTiles Data from OpenStreetMap"}},
  "aviation":{"status":"idle","attribution":"NOAA Aviation Weather Center",
             "station":null,"metar":null,"taf":null,"hazards":[]},
+ "layers":{"attribution":"NOAA NEXRAD · Open-Meteo","sources":[
+   {"id":"nexrad","name":"NEXRAD","kind":"sweep","group":"report","model":""},
+   {"id":"now","name":"Open-Meteo now","kind":"analysis","group":"report","model":"best_match"},
+   {"id":"gfs","name":"GFS","kind":"model","group":"forecast","model":"gfs_global"},
+   {"id":"ecmwf","name":"ECMWF IFS","kind":"model","group":"forecast","model":"ecmwf_ifs025"},
+   {"id":"wrf","name":"WRF","kind":"local","group":"forecast","model":"wrf"}],
+  "products":[
+   {"code":"REF","name":"Reflectivity","units":"dBZ","kind":"sweep",
+    "altitudes":[{"index":0,"name":"lowest cut","hpa":0}]},
+   {"code":"WIND","name":"Wind","units":"kt","kind":"field",
+    "altitudes":[{"index":0,"name":"SFC","hpa":0},{"index":2,"name":"5 000 ft · 850 hPa","hpa":850}]}]},
+ "wrf":{"status":"idle","image":"","lat":0,"lon":0,"message":"",
+        "estimate":{"widthKm":450,"heightKm":450,"areaKm2":202500,"dxKm":9,
+                    "hours":12,"cores":4,"levels":33,"nx":51,"ny":51,"cells":2500,
+                    "dtSec":54,"steps":800,"gribFiles":5,"downloadMin":4,
+                    "preprocessMin":2,"integrateMin":40,"totalMin":46,
+                    "totalMinLow":28,"totalMinHigh":85,"memoryMb":1600,
+                    "summary":"About 28–85 min for 450×450 km at 9 km, 12 h…"}},
  "playing":false}
 ```
 
@@ -180,6 +198,9 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 {"type":"search_places","query":"norman","lat":35.4,"lon":-97.5}
 {"type":"play"}  {"type":"pause"}  {"type":"step","delta":-1}  {"type":"seek","id":"..."}
 {"type":"set_product","product":"REF","elevationIndex":0}
+{"type":"set_source","source":"gfs"}
+{"type":"estimate_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
+{"type":"run_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
 {"type":"tiles_needed","z":11,"x0":469,"y0":807,"x1":472,"y1":810}
 ```
 
@@ -220,8 +241,33 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 ```
   `region` is the admin-1 name (a US state, a Canadian province);
   `country` is the ISO 3166-1 alpha-2 code. Either may be omitted when empty.
-- `set_product` requests a product and elevation. An unsupported selection
+- `set_product` requests a product and elevation (or field altitude) from
+  `state.layers`. `REF` at index 0 is the Level II sweep. `WIND`, `PRES`,
+  and `WATER` are live field layers; `elevationIndex` selects an altitude
+  from that product's list (surface plus 925 / 850 / 700 / 500 / 300 hPa).
+  Field layers are polar rasters of the current Open-Meteo hour around the
+  view centre; `frame.kind` is `field` and `frame.altitudeName` names the
+  cut. Archived mode rejects field products. An unsupported selection
   returns an `error` to its sender and retains the current frame.
+- `set_source` selects a layer source from `state.layers.sources`. `nexrad`
+  is the Level II sweep (a report). `now` is Open-Meteo's latest analysis
+  hour (`best_match`). `gfs` and `ecmwf` are forecast models. `wrf` is a
+  local Docker forecast; it does not start a run.
+- `estimate_wrf` fills `state.wrf.estimate` for the named centre and domain.
+  `widthKm` / `heightKm` are the domain sides (the map span is a good
+  default). Omit `dxKm` to pick a spacing from the span (3 / 9 / 15 km).
+  Omit `hours` for 12 h, `cores` for the host's CPUs. The estimate is a
+  desktop GNU WRF order-of-magnitude: GFS download, WPS/real, and
+  `wrf.exe`. Integration scales with cell count × levels × timesteps /
+  cores; timesteps follow the ARW CFL rule (dt seconds ≈ 6 × Δx km), so
+  a finer grid costs about Δx⁻³. The summary names a low–high minute
+  band. This is not a reservation.
+- `run_wrf` recomputes that estimate, then starts
+  `scripts/wrf-forecast.sh` against `OMASTORM_WRF_IMAGE` (default
+  `ncar/wrf_tutorial:latest`). Ordinary launch never does this. Live
+  only. Status is `queued` / `running` / `ok` / `failed` / `missing_docker`.
+  Working files stay under `$XDG_CACHE_HOME/omastorm/wrf/`. Raw wrfout
+  stays there; it is not a protocol texture.
 - `step` moves `delta` entries along `timeline` from the frame shown, stopping
   at the ends; `seek` shows the entry with `id`. Both stop playback. A stepped
   frame's textures are republished under new `tex/` paths with the frame's

@@ -30,6 +30,9 @@ client: it displays those textures in the bar popover and full window.
 - **Aviation briefing.** Live METAR, TAF, SIGMET, AIRMET, GAMET, and GRAMET
   for the view, from NOAA's Aviation Weather Center. Hazard polygons draw
   on the map.
+- **Field layers.** Live wind, pressure, and atmospheric water. Reports
+  (NEXRAD, Open-Meteo now) stay separate from forecasts (GFS, ECMWF IFS,
+  optional local WRF).
 - **Timeline.** Up to 60 scans per station, cached locally. Play, step, scrub.
 - **Three treatments.** Glyphs, Pixels, and Stipple sample the same gate and
   paint the cell differently.
@@ -105,6 +108,11 @@ cannot be reached, with cached frames kept.
 | `[` `]` | Step a frame |
 | `Home` `End` | Oldest or newest frame |
 | `1` `2` `3` | Pixels, Glyphs, Stipple |
+| `4` `5` `6` | Wind, pressure, water layers |
+| `Shift+O` `Shift+G` `Shift+E` `Shift+F` | Now, GFS, ECMWF, WRF sources |
+| `Shift+W` | Run local WRF (after the time estimate) |
+| `Shift+[` `Shift+]` | Layer altitude |
+| `Shift+R` | Radar (reflectivity) |
 | `w` | Show weak returns |
 | `?` | Keys sheet |
 | `Esc` | Close |
