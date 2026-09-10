@@ -1,3 +1,4 @@
+mod aviation;
 mod catalog;
 mod live;
 mod osm;
@@ -71,6 +72,10 @@ const PLAY_STEP_MAX: Duration = Duration::from_millis(1000);
 /// of the distance between two stations on either side of their midpoint.
 const HANDOFF_RATIO: f64 = 0.8;
 const HANDOFF_MARGIN_KM: f64 = 1.0;
+/// Nominal reflectivity footprint. Following will not select a station
+/// farther than this from the view centre, so Santiago does not inherit
+/// a Caribbean or CONUS sweep.
+const RADAR_REACH_KM: f64 = 460.0;
 
 /// Fingerprint of the running executable, set once in `main`.
 static BUILD: OnceLock<String> = OnceLock::new();
@@ -420,27 +425,39 @@ fn great_circle_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     2.0 * 6371.0 * h.clamp(0.0, 1.0).sqrt().asin()
 }
 /// The station following should hand off to when the view centre settles
-/// at `lat`, `lon`: the nearest table station, when it is not `current` and
-/// beats it by the hysteresis rule. `None` keeps the current station, so a
-/// centre between two stations does not flap. Nothing about the camera is
-/// decided here: the centre is the user's.
+/// at `lat`, `lon`: the nearest table station inside `RADAR_REACH_KM`, when
+/// it is not `current` and beats it by the hysteresis rule. `None` keeps
+/// the current station when one is still in reach, so a centre between two
+/// stations does not flap. Nothing about the camera is decided here: the
+/// centre is the user's.
 fn handoff<'a>(sites: &'a [Station], current: &str, lat: f64, lon: f64) -> Option<&'a Station> {
     let distance = |s: &Station| great_circle_km(lat, lon, s.lat, s.lon);
     let nearest = sites
         .iter()
         .min_by(|a, b| distance(a).total_cmp(&distance(b)))?;
+    if distance(nearest) > RADAR_REACH_KM {
+        return None;
+    }
     if nearest.id == current {
         return None;
     }
     match sites.iter().find(|s| s.id == current) {
         Some(held)
-            if distance(nearest) >= HANDOFF_RATIO * distance(held)
-                || distance(held) - distance(nearest) < HANDOFF_MARGIN_KM =>
+            if distance(held) <= RADAR_REACH_KM
+                && (distance(nearest) >= HANDOFF_RATIO * distance(held)
+                    || distance(held) - distance(nearest) < HANDOFF_MARGIN_KM) =>
         {
             None
         }
         _ => Some(nearest),
     }
+}
+
+fn nearest_site(sites: &[Station], lat: f64, lon: f64) -> Option<(&Station, f64)> {
+    sites
+        .iter()
+        .map(|s| (s, great_circle_km(lat, lon, s.lat, s.lon)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 fn initial_state(
     frame: Frame,
@@ -474,6 +491,7 @@ fn initial_state(
             },
             osm,
         },
+        aviation: aviation::Client::idle(),
         playing: false,
     }
 }
@@ -527,6 +545,10 @@ struct Shared {
     /// The last `state` line sent, so a tick that changed nothing is not
     /// re-sent.
     last_broadcast: String,
+    aviation: Arc<aviation::Client>,
+    /// Last settled view centre waiting for a briefing, live only.
+    aviation_center: Option<(f64, f64)>,
+    aviation_wake: Arc<Notify>,
 }
 impl Shared {
     fn snapshot(&mut self) -> String {
@@ -677,8 +699,10 @@ impl Shared {
     /// A pan settled with the map centred at `lat`, `lon`. While following and
     /// not locked, the nearest station takes over when it beats the current
     /// one by the hysteresis rule (`handoff`); the switch is a `select_site`,
-    /// so an uncached station opens on the loading view. Locked, or with
-    /// following off, the centre is noted for nothing.
+    /// so an uncached station opens on the loading view. A centre farther
+    /// than `RADAR_REACH_KM` from every table station leaves the sweep
+    /// rather than drawing a distant one. Locked, or with following off, the
+    /// radar is left alone. Live mode always notes the centre for aviation.
     fn view_center(&mut self, lat: f64, lon: f64) -> (bool, Option<String>) {
         if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
             return (
@@ -686,15 +710,80 @@ impl Shared {
                 Some("view_center needs lat in [-90, 90] and lon in [-180, 180].".into()),
             );
         }
+        let briefed = self.request_aviation(lat, lon);
         if !self.state.site.follow || self.state.site.locked {
-            return (false, None);
+            return (self.retarget_empty_site(lat, lon) || briefed, None);
+        }
+        let in_reach = nearest_site(&self.sites, lat, lon)
+            .is_some_and(|(_, distance)| distance <= RADAR_REACH_KM);
+        if !in_reach {
+            if self.state.source == Source::Live {
+                return (self.leave_coverage(lat, lon) || briefed, None);
+            }
+            return (briefed, None);
         }
         match handoff(&self.sites, &self.state.site.id, lat, lon) {
             Some(station) => {
                 let id = station.id.clone();
-                self.select_site(&id)
+                let (changed, rejection) = self.select_site(&id);
+                (changed || briefed, rejection)
             }
-            None => (false, None),
+            None => (briefed, None),
+        }
+    }
+    fn request_aviation(&mut self, lat: f64, lon: f64) -> bool {
+        if self.state.source != Source::Live {
+            return false;
+        }
+        self.aviation_center = Some((lat, lon));
+        if !self.aviation.should_refresh(lat, lon) {
+            return false;
+        }
+        if self.state.aviation.status == protocol::AviationStatus::Idle {
+            self.state.aviation = aviation::Client::loading();
+            self.aviation_wake.notify_one();
+            return true;
+        }
+        self.aviation_wake.notify_one();
+        false
+    }
+    /// Keep an empty-station placeholder sited on the view so map scale
+    /// follows the place the user chose, not the CONUS centroid.
+    fn retarget_empty_site(&mut self, lat: f64, lon: f64) -> bool {
+        if !self.state.site.id.is_empty() {
+            return false;
+        }
+        let site = &self.state.frame.site;
+        if great_circle_km(site.lat, site.lon, lat, lon) < 1.0 {
+            return false;
+        }
+        self.state.frame.site.lat = lat;
+        self.state.frame.site.lon = lon;
+        true
+    }
+    fn leave_coverage(&mut self, lat: f64, lon: f64) -> bool {
+        if self.state.site.id.is_empty() {
+            return self.retarget_empty_site(lat, lon);
+        }
+        if let Some(task) = self.live.take() {
+            task.abort();
+        }
+        self.timeline = Timeline::new(Vec::new());
+        self.pending = None;
+        self.frame_ms = None;
+        self.state.playing = false;
+        self.state.site.id.clear();
+        self.state.source = Source::Live;
+        self.state.connection.status = ConnectionStatus::Loading;
+        let mut frame = startup_frame(&self.template);
+        frame.site.lat = lat;
+        frame.site.lon = lon;
+        match blank_textures(&frame).and_then(|(texture, lut)| self.show(frame, &texture, &lut)) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("Leaving radar coverage: {e}");
+                true
+            }
         }
     }
     /// A live sweep for the selected station grew or completed: it joins the
@@ -948,6 +1037,42 @@ fn decode_and_publish(dir: &Path, template: &Frame, archive: &[u8]) -> io::Resul
         started.elapsed()
     );
     Ok((frame, sweep.start_ms))
+}
+/// Fetch the aviation briefing for the last settled view centre. Archived
+/// daemons never wake this path; live `view_center` does.
+async fn aviation_loop(
+    shared: Arc<Mutex<Shared>>,
+    client: Arc<aviation::Client>,
+    wake: Arc<Notify>,
+) {
+    loop {
+        wake.notified().await;
+        sleep(Duration::from_millis(250)).await;
+        let Some((lat, lon)) = shared.lock().unwrap().aviation_center else {
+            continue;
+        };
+        if shared.lock().unwrap().state.source != Source::Live {
+            continue;
+        }
+        if !client.should_refresh(lat, lon) {
+            continue;
+        }
+        {
+            let mut shared = shared.lock().unwrap();
+            if shared.state.aviation.status == protocol::AviationStatus::Idle {
+                shared.state.aviation.status = protocol::AviationStatus::Loading;
+                shared.broadcast();
+            }
+        }
+        let briefing = client.fetch(lat, lon).await;
+        let mut shared = shared.lock().unwrap();
+        if shared.state.source != Source::Live {
+            continue;
+        }
+        if set(&mut shared.state.aviation, briefing) {
+            shared.broadcast();
+        }
+    }
 }
 /// Turn the pollers' events into frames: encode on the blocking pool and
 /// record complete frames in the catalog, then hand the frame to the
@@ -1567,6 +1692,8 @@ fn serve(dir: PathBuf) -> io::Result<()> {
     let catalog = Arc::new(catalog::Catalog::open(osm::cache_root()?.join("frames"))?);
     let (events, event_rx) = mpsc::channel(16);
     let wake = Arc::new(Notify::new());
+    let aviation_wake = Arc::new(Notify::new());
+    let aviation_client = Arc::new(aviation::Client::open()?);
     let shared = Arc::new(Mutex::new(Shared {
         state: initial_state(frame, osm.info(), source, status),
         tiles: tile_store,
@@ -1584,6 +1711,9 @@ fn serve(dir: PathBuf) -> io::Result<()> {
         pending: None,
         wake: wake.clone(),
         last_broadcast: String::new(),
+        aviation: aviation_client.clone(),
+        aviation_center: None,
+        aviation_wake: aviation_wake.clone(),
     }));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -1595,6 +1725,11 @@ fn serve(dir: PathBuf) -> io::Result<()> {
     let listener = UnixListener::bind(&socket)?;
     runtime.spawn(live_events(shared.clone(), event_rx));
     runtime.spawn(player(shared.clone(), wake));
+    runtime.spawn(aviation_loop(
+        shared.clone(),
+        aviation_client,
+        aviation_wake,
+    ));
     let cleanup_shared = shared.clone();
     runtime.spawn(async move {
         let mut retirement = Retirement::default();
@@ -2110,7 +2245,7 @@ mod tests {
 }
 #[cfg(test)]
 mod handoff_tests {
-    use super::{great_circle_km, handoff, site_table};
+    use super::{RADAR_REACH_KM, great_circle_km, handoff, nearest_site, site_table};
     use crate::protocol::Station;
 
     fn station(id: &str, lat: f64, lon: f64) -> Station {
@@ -2190,5 +2325,17 @@ mod handoff_tests {
             handoff(&sites, "ZZZZ", 35.333361, -97.277761).map(|s| &s.id[..]),
             Some("KTLX")
         );
+    }
+
+    #[test]
+    fn santiago_is_outside_nexrad_reach() {
+        let sites = site_table().sites;
+        let (_, distance) = nearest_site(&sites, -33.4372, -70.6506).unwrap();
+        assert!(
+            distance > RADAR_REACH_KM,
+            "nearest NEXRAD to Santiago is {distance} km"
+        );
+        assert!(handoff(&sites, "", -33.4372, -70.6506).is_none());
+        assert!(handoff(&sites, "KTLX", -33.4372, -70.6506).is_none());
     }
 }

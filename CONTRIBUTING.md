@@ -82,8 +82,10 @@ rewrite it to match a new decode by accident. Capture scripts write images
 under `review/` for visual review; those stay out of git. Regenerate them when
 the picture changed, and include the captures with the review.
 
-Honor [DESIGN.md](DESIGN.md): actual scan times, no forecasts, chrome from the
-Omarchy theme, radar color only from `frame.palette`.
+Honor [DESIGN.md](DESIGN.md): actual scan times, no gridded forecast
+products, chrome from the Omarchy theme, radar color only from
+`frame.palette`. TAF, GAMET, and GRAMET are issued bulletin text, not a
+model field.
 
 ## Verify and submit
 

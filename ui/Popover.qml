@@ -113,7 +113,8 @@ FocusScope {
                 weakFloor: card.session.weakFloor
                 labelSize: 10
                 radarOpacity: card.condition === "unavailable" ? .6 : 1
-                onTilesNeeded: (z, x0, y0, x1, y1) => connection.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
+                    hazards: card.state && card.state.aviation ? card.state.aviation.hazards : []
+                    onTilesNeeded: (z, x0, y0, x1, y1) => connection.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
                 function applyView() {
                     if (!card.session.hasView) return;
                     holdSpan = true;
@@ -176,6 +177,22 @@ FocusScope {
             Layout.fillWidth: true
             visible: !!connection.rejection
             text: connection.rejection; color: card.theme.accent; wrapMode: Text.Wrap
+        }
+        Label {
+            Layout.fillWidth: true
+            visible: !!card.state && !!card.state.aviation && card.state.aviation.status !== "idle"
+                && card.state.aviation.status !== "unavailable"
+            wrapMode: Text.Wrap
+            opacity: .7
+            font.pixelSize: 10
+            text: {
+                var a = card.state.aviation;
+                if (a.status === "loading") return "AVIATION · LOADING";
+                if (a.status === "offline") return "AVIATION · OFFLINE";
+                if (a.metar && a.metar.raw)
+                    return (a.station ? a.station.id + " · " : "") + a.metar.raw;
+                return "";
+            }
         }
         RowLayout {
             Layout.fillWidth: true

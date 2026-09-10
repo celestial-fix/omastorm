@@ -28,8 +28,8 @@ OpenMapTiles vector tiles served by OpenFreeMap, © OpenStreetMap contributors
 (ODbL), fetched by the engine at run time and attributed in the UI.
 
 The location picker searches [GeoNames](https://www.geonames.org/)
-`cities5000` (populated places with population ≥ 5000) clipped to that
-same envelope, with admin-1 names from `admin1CodesASCII.txt`.
+`cities5000` (populated places with population ≥ 5000) worldwide,
+with admin-1 names from `admin1CodesASCII.txt`.
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Map labels do
 not use this table. The city-list checksum covers the official 2026-09-10
 snapshot (69,705 records).

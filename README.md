@@ -24,8 +24,12 @@ client: it displays those textures in the bar popover and full window.
 
 - **Live.** A Rust engine polls NOAA's public Level II feed and sweeps paint as
   the antenna turns. Stale data says it is stale.
-- **Every site.** Pan the map and it follows the nearest station, or search by
-  id, city, or state.
+- **Every site.** Pan the map and it follows the nearest station in range, or
+  search by id, city, or country. Places worldwide, including Santiago,
+  search; outside the NEXRAD footprint the map stands without a distant sweep.
+- **Aviation briefing.** Live METAR, TAF, SIGMET, AIRMET, GAMET, and GRAMET
+  for the view, from NOAA's Aviation Weather Center. Hazard polygons draw
+  on the map.
 - **Timeline.** Up to 60 scans per station, cached locally. Play, step, scrub.
 - **Three treatments.** Glyphs, Pixels, and Stipple sample the same gate and
   paint the cell differently.
@@ -180,7 +184,10 @@ This is a beta. Bugs, rough edges, and ideas go to
 
 ## Data and licenses
 
-Radar: NOAA NEXRAD Level II via the NOAA Open Data program on AWS. Basemap: ©
+Radar: NOAA NEXRAD Level II via the NOAA Open Data program on AWS. Aviation
+briefing: NOAA Aviation Weather Center (METAR, TAF, SIGMET, AIRMET, GAMET,
+GRAMET).
+Basemap: ©
 OpenStreetMap contributors, [ODbL](https://opendatacommons.org/licenses/odbl/1-0/),
 tiles by [OpenFreeMap](https://openfreemap.org); Natural Earth, public domain.
 Location search: [GeoNames](https://www.geonames.org/),

@@ -43,6 +43,8 @@ It is small (a few KB) so clients replace rather than merge.
  "timeline":[{"id":"...","scanTime":"...","status":"complete"}],
  "basemap":{"ne":{"version":"5.2.0-pre"},"osm":{"status":"ok","source":"OpenFreeMap",
             "version":"20260830_080001_pt","attribution":"OpenFreeMap © OpenMapTiles Data from OpenStreetMap"}},
+ "aviation":{"status":"idle","attribution":"NOAA Aviation Weather Center",
+            "station":null,"metar":null,"taf":null,"hazards":[]},
  "playing":false}
 ```
 
@@ -155,6 +157,18 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   read, and name OpenFreeMap by its host before that. The UI shows
   `osm.attribution` verbatim whenever an `osm` tile is on screen. It is
   shared state: a change is broadcast like any other.
+- `aviation` is the briefing for the last settled `view_center`, fetched
+  only in live mode from NOAA's Aviation Weather Center. Archived daemons
+  and a live daemon that has not yet received a centre stay
+  `status` `idle`. After a centre arrives, `loading` is replaced by `ok`
+  (a METAR, TAF, or hazard), `unavailable` (the feed answered and nothing
+  was near the view), or `offline` (the feed could not be read). `station`
+  is the nearest METAR; `metar` and `taf` carry `raw` bulletin text and
+  `time` (observation or issue, ISO-8601). TAF may add `validFrom` /
+  `validTo`. `hazards` are SIGMET, AIRMET, GAMET, and GRAMET bulletins whose
+  polygons intersect the view, each with `kind`, `hazard`, `raw`, and
+  `coords` `[{lat,lon}, …]`. Radar values still never enter JSON; these
+  are issued bulletins. `OMASTORM_AVIATION_URL` overrides the API root.
 
 ## Client commands
 
@@ -176,19 +190,22 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   nothing. An id outside the table is answered with an `error`.
 - `view_center` is sent when a pan or zoom settles and the centre moved, not
   per frame. With `follow` on and `lock` off, the engine hands off to the
-  station nearest the centre by great-circle distance when that station beats
-  the current one by the hysteresis rule (closer than 0.8 of the current
-  station's distance and by at least 1 km, so a centre between two stations
-  keeps whichever it has; the dead band is about a twentieth of the spacing
-  either side of the midpoint); the hand-off is a `select_site`, so `state`
-  is broadcast and an uncached station opens on the loading placeholder.
-  Locked or not following, or when the current station stays nearest,
-  nothing changes and nothing is sent. The engine never moves the camera:
+  station nearest the centre by great-circle distance when that station is
+  within 460 km and beats the current one by the hysteresis rule (closer
+  than 0.8 of the current station's distance and by at least 1 km, so a
+  centre between two stations keeps whichever it has; the dead band is
+  about a twentieth of the spacing either side of the midpoint); the
+  hand-off is a `select_site`, so `state` is broadcast and an uncached
+  station opens on the loading placeholder. When every table station is
+  farther than 460 km, the engine leaves the sweep and shows the map
+  without radar, sited on the view centre. Live mode also refreshes
+  `aviation` for that centre. Locked or not following, the radar is left
+  alone and the briefing still updates. The engine never moves the camera:
   the centre is the user's. A latitude outside ±90 or a longitude outside
   ±180 is answered with an `error`. `lock` and `follow` are shared flags;
   releasing the lock hands off on the next settle, not at once.
 - `search_places` ranks the embedded gazetteer (GeoNames populated places
-  with population ≥ 5000, clipped to the NEXRAD network envelope) for the
+  with population ≥ 5000, worldwide) for the
   location picker and is answered with `places` to the sender only, like
   `tile_ready`. Map labels stay on Natural Earth. `query` is required;
   optional `lat` and `lon` order nearer matches first. Word-start matches

@@ -42,7 +42,7 @@ center. The popover offers "Choose a location", opening the expanded
 window's picker. Offer place search and "Enter coordinates", which reveals
 labeled latitude and longitude fields with validation. Place search is an
 engine `search_places` reply over GeoNames cities with population ≥ 5000
-in the network envelope (state/region and country so two Jacksonvilles are
+worldwide (state/region and country so two Jacksonvilles are
 distinct); map labels stay Natural Earth. "Show radar" accepts the location.
 No separate setup wizard or settings window is required. Keep the picker
 reachable after onboarding (`Shift+H` and LOCATION). Coordinate entry
@@ -56,7 +56,9 @@ to discover the user's location.
 
 Resolve the radar separately: an explicit `locked_radar` in config wins,
 otherwise restore a remembered radar lock, otherwise choose the station
-nearest the map center. A radar lock alone does not supply a map center or
+nearest the map center when it lies inside the 460 km reflectivity
+footprint. Outside that reach the map stands without a sweep; do not borrow
+a distant NEXRAD site. A radar lock alone does not supply a map center or
 bypass location onboarding. Newly chosen locations start unlocked unless a
 configured radar override applies.
 
@@ -99,7 +101,11 @@ file ownership and precedence. Do not write Omarchy, Hyprland, or system
 configuration.
 
 A product is a texture, legend, units, timestamp, and source from the engine.
-Level II is what is drawn.
+Level II is what is drawn. Live mode may also carry an aviation briefing
+for the view: METAR (observed), TAF as issued bulletin text, and
+SIGMET / AIRMET / GAMET / GRAMET polygons. That briefing is not a radar product and
+does not replace the sweep. Gridded forecast fields (GRIB, NetCDF, and
+model output) stay out of this app.
 
 The live poller follows the latest volume. `try_next` returning no chunk is
 normal between chunks, but 90 seconds with no chunk at all means the

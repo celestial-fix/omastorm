@@ -51,13 +51,14 @@ function distanceKm(lat1, lon1, lat2, lon2) {
     return 2 * 6371 * Math.asin(Math.sqrt(Math.max(0, Math.min(1, h))));
 }
 
-function nearestSite(sites, lat, lon) {
+function nearestSite(sites, lat, lon, reachKm) {
     var best = null, bestKm = Infinity;
     if (!validPair(lat, lon) || !sites) return null;
     for (var s of sites) {
         var km = distanceKm(lat, lon, s.lat, s.lon);
         if (km < bestKm) { bestKm = km; best = s; }
     }
+    if (best && typeof reachKm === "number" && bestKm > reachKm) return null;
     return best;
 }
 

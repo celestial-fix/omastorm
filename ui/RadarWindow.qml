@@ -88,6 +88,19 @@ Item {
         default: return scan.status === "partial" && scan.scanTime ? "SCANNING · " + Math.max(0, scan.rays - 1) + " RADIALS" : "";
         }
     }
+    readonly property var aviation: state && state.aviation ? state.aviation : null
+    readonly property string aviationLine: {
+        if (!aviation || aviation.status === "idle") return "";
+        if (aviation.status === "loading") return "AVIATION · LOADING";
+        if (aviation.status === "offline") return "AVIATION · OFFLINE";
+        if (aviation.status === "unavailable") return "AVIATION · NO BULLETIN";
+        var id = aviation.station ? aviation.station.id : "";
+        var cat = aviation.metar && aviation.metar.category ? aviation.metar.category + " · " : "";
+        var raw = aviation.metar ? aviation.metar.raw : "";
+        var n = aviation.hazards ? aviation.hazards.length : 0;
+        var hazards = n ? " · " + n + " HAZARD" + (n === 1 ? "" : "S") : "";
+        return (id ? id + " · " : "") + cat + (raw || "BRIEFING") + hazards;
+    }
     // Clock readings are the machine's local time; the wire is UTC. `zone`
     // appends the zone's abbreviation where the reading stands alone.
     function clock(iso, zone) { return iso ? Qt.formatTime(new Date(iso), zone ? "HH:mm t" : "HH:mm") : ""; }
@@ -269,7 +282,12 @@ Item {
     }
     function nearest() {
         var s = map.nearest();
-        if (!state || !s) return;
+        if (!state) return;
+        if (!s) {
+            app.notice = "NO NEXRAD WITHIN RANGE";
+            noticeTimer.restart();
+            return;
+        }
         store.followNearest(s.id);
     }
     function choose(s) {
@@ -502,6 +520,22 @@ Item {
                     Layout.fillWidth: true
                 }
             }
+            LabelText {
+                visible: app.aviationLine !== "" && !win.compact
+                text: app.aviationLine
+                wrapMode: Text.Wrap
+                opacity: .75
+                font.pixelSize: 11
+                Layout.fillWidth: true
+            }
+            LabelText {
+                visible: !win.compact && !!app.aviation && !!app.aviation.taf && !!app.aviation.taf.raw
+                text: "TAF · " + app.aviation.taf.raw
+                wrapMode: Text.Wrap
+                opacity: .55
+                font.pixelSize: 10
+                Layout.fillWidth: true
+            }
             Rectangle {
                 id: mapFrame
                 Layout.fillWidth: true
@@ -543,6 +577,7 @@ Item {
                     Component.onCompleted: app.applyView()
                     // The map asks for tiles when its camera settles and the
                     // engine answers this window alone, tile by tile.
+                    hazards: app.aviation && app.aviation.hazards ? app.aviation.hazards : []
                     onTilesNeeded: (z, x0, y0, x1, y1) => engine.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
                 }
                 Connections { target: engine; function onTileReady(tile) { map.tileReady(tile); } }
@@ -570,7 +605,11 @@ Item {
                 LabelText {
                     anchors.bottom: parent.bottom; anchors.right: parent.right; anchors.margins: 12
                     anchors.left: parent.horizontalCenter; horizontalAlignment: Text.AlignRight
-                    text: map.osmOnScreen && app.state && app.state.basemap ? app.state.basemap.osm.attribution : "NATURAL EARTH · OFFLINE"
+                    text: {
+                        var mapCredit = map.osmOnScreen && app.state && app.state.basemap ? app.state.basemap.osm.attribution : "NATURAL EARTH · OFFLINE";
+                        var air = app.aviation && app.aviation.status !== "idle" ? " · " + app.aviation.attribution : "";
+                        return mapCredit + air;
+                    }
                     visible: !!app.scan
                     font.pixelSize: 10; opacity: .7
                 }

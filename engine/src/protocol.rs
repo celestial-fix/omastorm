@@ -130,6 +130,8 @@ pub struct State {
     pub frame: Frame,
     /// The tile sources (`docs/protocol.md`, `tile_ready`).
     pub basemap: Basemap,
+    /// Aviation briefing for the last settled view centre (`docs/protocol.md`).
+    pub aviation: Aviation,
     pub playing: bool,
 }
 
@@ -155,6 +157,72 @@ pub struct Osm {
     /// The data version, empty until one is known.
     pub version: String,
     pub attribution: String,
+}
+
+/// Observed and advisory aviation products for the view (`docs/protocol.md`).
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Aviation {
+    pub status: AviationStatus,
+    pub attribution: String,
+    pub station: Option<AviationStation>,
+    pub metar: Option<Bulletin>,
+    pub taf: Option<Bulletin>,
+    pub hazards: Vec<Hazard>,
+}
+
+#[derive(Serialize, PartialEq, Clone, Copy, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum AviationStatus {
+    /// Live, but no view centre has been briefed yet; archived stays here.
+    Idle,
+    Loading,
+    Ok,
+    Offline,
+    Unavailable,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AviationStation {
+    pub id: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub distance_km: f64,
+}
+
+/// One METAR or TAF bulletin. `time` is the observation or issue instant.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Bulletin {
+    pub raw: String,
+    pub time: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub valid_from: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub valid_to: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub category: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Hazard {
+    /// `sigmet`, `airmet`, `gamet`, or `gramet`.
+    pub kind: String,
+    pub hazard: String,
+    pub raw: String,
+    pub coords: Vec<Point>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub valid_from: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub valid_to: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Copy, Debug)]
+pub struct Point {
+    pub lat: f64,
+    pub lon: f64,
 }
 
 #[derive(Serialize, PartialEq, Clone, Copy, Debug)]
@@ -359,8 +427,9 @@ pub enum Command {
         lat: f64,
         lon: f64,
     },
-    /// Rank gazetteer places for the location picker. Answered with
-    /// `places` to the sender; optional `lat`/`lon` order nearer matches first.
+    /// Rank gazetteer places for the location picker (worldwide GeoNames
+    /// ≥ 5000). Answered with `places` to the sender; optional `lat`/`lon`
+    /// order nearer matches first.
     SearchPlaces {
         query: String,
         #[serde(default)]

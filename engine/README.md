@@ -77,7 +77,16 @@ per frame. New live sweeps take the screen only while the newest entry is select
 
 The station table's source, retrieval date, and caveats are in `data/sites.json`
 and hello. It includes archived and test sites; membership does not imply live
-availability. An archived scan retains its measured coordinates.
+availability. An archived scan retains its measured coordinates. Following
+selects a station only when it lies within 460 km of the view centre.
+
+## Aviation
+
+Live `view_center` fetches a briefing from NOAA's Aviation Weather Center:
+the nearest METAR in a 2° box, its TAF, and SIGMET / AIRMET / GAMET /
+GRAMET hazards in a 5° box. Archived mode and ordinary checks never fetch.
+`OMASTORM_AVIATION_URL` overrides the API root. The UI shows issued
+bulletin text and hazard polygons; it does not decode GRIB or NetCDF.
 
 ## Basemap
 

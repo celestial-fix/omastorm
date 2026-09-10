@@ -138,7 +138,14 @@ fn fixture_transport_and_shared_commands() {
     );
     assert_eq!(initial["playing"], false);
     assert!(initial["connection"]["ageSeconds"].as_u64().unwrap() > 400_000_000);
-    assert!(initial.to_string().len() < 2500);
+    assert_eq!(initial["aviation"]["status"], "idle");
+    assert!(
+        initial["aviation"]["hazards"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(initial.to_string().len() < 4000);
     assert!(initial["frame"].get("values").is_none());
     // The frame is the lowest sweep decoded from the Level II fixture: a polar
     // texture with an azimuth lookup and gate geometry, and nothing else that
@@ -268,6 +275,13 @@ fn fixture_transport_and_shared_commands() {
     );
     let places = read(&mut second);
     assert_eq!(places["results"][0]["name"], "Norman");
+    send(
+        &mut first,
+        json!({"type":"search_places","query":"santiago","lat":-33.45,"lon":-70.67}),
+    );
+    let places = read(&mut first);
+    assert_eq!(places["results"][0]["name"], "Santiago");
+    assert_eq!(places["results"][0]["country"], "CL");
     send(
         &mut first,
         json!({"type":"search_places","query":"x","lat":95.0,"lon":0.0}),
