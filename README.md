@@ -35,6 +35,9 @@ client: it displays those textures in the bar popover and full window.
   key is rebindable.
 - **Honest.** Actual scan times. Missing, range-folded, and below-threshold
   returns are drawn distinctly from measured values. Displays individual radar sweeps.
+- **Your weather source.** Optionally show current conditions from WeeWX,
+  WeatherAPI, OpenWeatherMap, Tomorrow.io, or Visual Crossing using the key
+  you already have. Choose the source in the window (`Shift+W`).
 
 ## Install
 
