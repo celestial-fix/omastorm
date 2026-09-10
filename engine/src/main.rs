@@ -1,7 +1,9 @@
 mod catalog;
+mod lcc;
 mod live;
 mod osm;
 mod protocol;
+mod report;
 mod sweep;
 mod tiles;
 
@@ -9,8 +11,8 @@ use catalog::Entry;
 use chrono::{DateTime, Utc};
 use protocol::{
     Basemap, Command, Connection, ConnectionStatus, Frame, FrameStatus, Geometry, Handshake, Hello,
-    Message, NaturalEarth, Places, Rejection, SiteSelection, SiteTable, Source, State, Station,
-    TileReady, TimelineEntry, VERSION, is_texture_path,
+    Message, NaturalEarth, Places, Rejection, ReportReady, SiteSelection, SiteTable, Source, State,
+    Station, TileReady, TimelineEntry, VERSION, is_texture_path,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -860,7 +862,10 @@ impl Shared {
                 Some("Only reflectivity at elevation index 0 is available in this build.".into()),
             ),
             // Tile requests and place search are answered to the sender, not state.
-            Command::TilesNeeded { .. } | Command::SearchPlaces { .. } | Command::Unsupported => {
+            Command::TilesNeeded { .. }
+            | Command::SearchPlaces { .. }
+            | Command::ExportReport { .. }
+            | Command::Unsupported => {
                 return None;
             }
         };
@@ -1190,6 +1195,94 @@ fn cleanup(dir: &Path, shared: &Mutex<Shared>, retirement: &mut Retirement) -> i
     }
     Ok(())
 }
+/// Validate `export_report`, snapshot the current sweep, and raster the
+/// chart on the blocking pool. The answer goes only to `reply`.
+fn export_report(
+    shared: &Mutex<Shared>,
+    reply: &Sender<String>,
+    request: report::Request,
+) -> Option<String> {
+    let (frame, dir) = {
+        let shared = shared.lock().unwrap();
+        (shared.state.frame.clone(), shared.dir.clone())
+    };
+    let accepted = match report::Job::validate(
+        request.west,
+        request.south,
+        request.east,
+        request.north,
+        request.layers,
+        request.width,
+        &frame,
+    ) {
+        Ok(accepted) => accepted,
+        Err(message) => return Some(message),
+    };
+    let west = accepted.west;
+    let south = accepted.south;
+    let east = accepted.east;
+    let north = accepted.north;
+    let texture = match fs::read(dir.join(&frame.texture)) {
+        Ok(bytes) => bytes,
+        Err(e) => return Some(format!("Cannot read the sweep texture: {e}.")),
+    };
+    let lut = match fs::read(dir.join(&frame.azimuth_lut)) {
+        Ok(bytes) => bytes,
+        Err(e) => return Some(format!("Cannot read the azimuth lookup: {e}.")),
+    };
+    let job = report::Job {
+        west: accepted.west,
+        south: accepted.south,
+        east: accepted.east,
+        north: accepted.north,
+        layers: accepted.layers,
+        width: accepted.width,
+        frame,
+        texture,
+        lut,
+    };
+    let reply = reply.clone();
+    tokio::spawn(async move {
+        let result = spawn_blocking(move || job.run()).await;
+        match result {
+            Ok(Ok(ready)) => {
+                let message = ReportReady {
+                    v: VERSION,
+                    path: &ready.path,
+                    projection: "lcc",
+                    layers: &ready.layers,
+                    west,
+                    south,
+                    east,
+                    north,
+                    width: ready.width,
+                    height: ready.height,
+                };
+                let _ = reply.try_send(line(&Message::ReportReady(&message)));
+            }
+            Ok(Err(e)) => {
+                let message = format!("Export failed: {e}.");
+                let rejection = Rejection {
+                    v: VERSION,
+                    command: "export_report",
+                    message: &message,
+                };
+                let _ = reply.try_send(line(&Message::Error(&rejection)));
+            }
+            Err(e) => {
+                let message = format!("Export failed: {e}.");
+                let rejection = Rejection {
+                    v: VERSION,
+                    command: "export_report",
+                    message: &message,
+                };
+                let _ = reply.try_send(line(&Message::Error(&rejection)));
+            }
+        }
+    });
+    None
+}
+
 /// One line from a client. Rejections go back on `reply`, that client's own
 /// queue, so no other client hears about a command it did not send; a tile
 /// request goes to that client's tile task on `tiles`.
@@ -1252,6 +1345,28 @@ fn receive(
                 return;
             }
         }
+        Ok(Command::ExportReport {
+            west,
+            south,
+            east,
+            north,
+            layers,
+            width,
+        }) => match export_report(
+            shared,
+            reply,
+            report::Request {
+                west,
+                south,
+                east,
+                north,
+                layers,
+                width,
+            },
+        ) {
+            None => return,
+            Some(message) => message,
+        },
         Ok(command) => match shared.lock().unwrap().apply(command) {
             Some(message) => message,
             None => return,

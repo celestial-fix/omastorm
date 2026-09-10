@@ -116,7 +116,7 @@ the machine's own state and weather files are not read unless
   `pan_down` `pan_up` `pan_right` (`h j k l` and the arrows), `zoom_in`
   (`+ =`), `zoom_out` (`-`), `reset` (`0`, the resolved location), `previous_frame` (`[`),
   `next_frame` (`]`), `play` (`Space`), `oldest` (`Home`), `newest` (`End`),
-  `pixels` `glyphs` `stipple` (`1 2 3`), `weak` (`w`), `help` (`?`), `close`
+  `pixels` `glyphs` `stipple` (`1 2 3`), `weak` (`w`), `export` (`e`), `help` (`?`), `close`
   (`Escape`).
   A value that is not a quoted string, a sequence Qt cannot parse, an
   unknown action, or a key another action already holds leaves that action

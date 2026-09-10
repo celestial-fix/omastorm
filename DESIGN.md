@@ -112,6 +112,18 @@ rediscovery. A rediscovery that finds only a sweep already in the catalog
 leaves the frame and connection chrome alone; a newer volume still clears
 UNAVAILABLE / OFFLINE.
 
+## Chart export
+
+`e` opens an export sheet over the window. The engine writes a Lambert
+conformal conic PNG of the view on screen under
+`$XDG_DATA_HOME/omastorm/reports/`. Layers are the products this build can
+draw: lowest-cut reflectivity (`ref` / storms), Natural Earth geography, and
+range rings. Pressure, winds, other altitudes, GRAMET route meteograms, and
+WRF or other model fields are not ingested; asking for them is refused by
+name. The live map stays Web Mercator. The chart is a document: paper
+background, the frame's palette, the actual scan time, and Natural Earth
+attribution. Radar values still do not enter JSON or QML.
+
 ## Scope
 
 Keep the feature set small. Prefer the weather panel, the theme, and the
