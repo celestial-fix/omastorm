@@ -34,7 +34,10 @@ map center in this order:
 
 1. Explicit `center_lat` and `center_lon` in `config.toml`.
 2. The last center remembered in `state.json`.
-3. Valid coordinates from Omarchy's weather location (`weather.json`).
+3. Valid coordinates from the weather location file (`weather.json`):
+   Omarchy's `{name, latitude, longitude}`, or the same place fields in a
+   WeeWX, WeatherAPI, OpenWeatherMap, Tomorrow.io, or Visual Crossing
+   payload. Do not fetch those APIs to discover a place.
 4. A location chosen through Omastorm's location picker.
 
 Only show onboarding when none of the first three sources supplies a valid
@@ -111,6 +114,14 @@ the task has ended, start it again. Cached frames stay on screen through a
 rediscovery. A rediscovery that finds only a sweep already in the catalog
 leaves the frame and connection chrome alone; a newer volume still clears
 UNAVAILABLE / OFFLINE.
+
+An optional current-conditions source (WeeWX, WeatherAPI, OpenWeatherMap,
+Tomorrow.io, Visual Crossing) is the user's choice: they pick the source and
+enter their API key, or a WeeWX JSON URL. The engine fetches the current
+observation only — no forecasts — and the chrome shows temperature, condition,
+source, and observation time. The key lives in `weather.toml` (or `[weather]`
+in config.toml), travels to the engine over the local socket, and never enters
+`state.json` or the `state` broadcast. Unset, nothing is fetched.
 
 ## Scope
 

@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "Keys.js" as KeyMap
 import "Timeline.js" as Timeline
+import "Location.js" as Location
 
 FocusScope {
     id: card
@@ -13,6 +14,7 @@ FocusScope {
     readonly property var scan: state ? state.frame : null
     readonly property var frames: state ? state.timeline : []
     readonly property var slots: Timeline.slots(frames)
+    readonly property string weatherText: Location.formatWeather(state && state.weather)
     readonly property string condition: state ? state.source === "archived" ? "archived" : state.connection.status : "offline"
     readonly property color statusColor: condition === "stale" ? theme.yellow
         : condition === "offline" || condition === "unavailable" ? theme.red : theme.accent
@@ -92,6 +94,14 @@ FocusScope {
             Label { Layout.fillWidth: true; text: connection.site ? connection.site.name : ""; opacity: .65 }
             Rectangle { width: 5; height: 5; radius: 3; color: card.statusColor }
             Label { text: card.statusText; color: card.statusColor; font.pixelSize: 11 }
+        }
+        Label {
+            Layout.fillWidth: true
+            visible: card.weatherText !== ""
+            text: card.weatherText
+            font.pixelSize: 10
+            opacity: .65
+            elide: Text.ElideRight
         }
         Rectangle {
             Layout.fillWidth: true

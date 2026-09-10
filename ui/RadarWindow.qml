@@ -183,6 +183,7 @@ Item {
         function onTreatmentChanged() { app.applySettings(); }
         function onWeakFloorChanged() { app.applySettings(); }
         function onValuesChanged() { app.applySettings(); }
+        function onWeatherValuesChanged() { app.applySettings(); }
     }
     // The keyboard map (DESIGN.md, keyboard map as built): Keys.js lays the
     // `[keys]` table over the defaults, asking Qt whether each sequence
@@ -197,7 +198,7 @@ Item {
     Shortcut { id: probe; enabled: false }
     function canon(sequence) { probe.sequence = sequence; return probe.portableText; }
     function applySettings() {
-        var errors = Location.configErrors(config.values);
+        var errors = Location.configErrors(config.values).concat(Location.weatherSettings(config.values, config.weatherValues).errors);
         var wanted = KeyMap.treatment(config.treatment, errors), floor = KeyMap.weakFloor(config.weakFloor, errors);
         var resolved = KeyMap.resolve(config.keys, canon);
         bindings = resolved.bindings;
@@ -206,13 +207,14 @@ Item {
         if (!session && KeyMap.envFloor(Quickshell.env("OMASTORM_WEAK")) === undefined) weakFloor = floor;
     }
     Component.onCompleted: applySettings()
-    readonly property bool overlayOpen: picker.open || locationPicker.open || sheet.open
+    readonly property bool overlayOpen: picker.open || locationPicker.open || weatherPicker.open || sheet.open
     function run(action) {
         switch (action) {
         case "search": treatmentMenu.close(); picker.show(""); break;
         case "nearest": nearest(); break;
         case "lock": toggleLock(); break;
         case "home": locationPicker.show(""); break;
+        case "weather": weatherPicker.show(); break;
         case "pan_left": map.pan(-1, 0); break;
         case "pan_right": map.pan(1, 0); break;
         case "pan_up": map.pan(0, -1); break;
@@ -253,6 +255,7 @@ Item {
     readonly property bool locked: state ? state.site.locked : false
     readonly property bool following: state ? state.site.follow && !state.site.locked : false
     readonly property var resetTarget: Location.resolveReset(Location.configCenter(config.values), config.location)
+    readonly property string weatherText: Location.formatWeather(state && state.weather)
     readonly property bool outsideCoverage: {
         var s = engine.site;
         return !!(locked && s && Location.distanceKm(map.centerLat, map.centerLon, s.lat, s.lon) > map.coverageKm);
@@ -299,6 +302,23 @@ Item {
         function setLon(text: string): void { locationPicker.lonText = text; }
         function matches(): string { return JSON.stringify(locationPicker.rows.map(r => r.where ? r.name + ", " + r.where : r.name)); }
         function status(): string { return JSON.stringify({open: locationPicker.open, query: locationPicker.query, selected: locationPicker.selected, focused: locationPicker.fieldFocused, count: locationPicker.rows.length, lat: locationPicker.latText, lon: locationPicker.lonText, error: locationPicker.coordError}); }
+    }
+    IpcHandler {
+        target: "weather"
+        function open(): void { weatherPicker.show(); }
+        function close(): void { weatherPicker.close(); }
+        function save(): void { weatherPicker.save(); }
+        function clear(): void { weatherPicker.clear(); }
+        function setSource(id: string): void { weatherPicker.source = id; }
+        function setKey(text: string): void { weatherPicker.keyText = text; }
+        function setUrl(text: string): void { weatherPicker.urlText = text; }
+        function status(): string {
+            return JSON.stringify({
+                open: weatherPicker.open, source: weatherPicker.source,
+                key: weatherPicker.keyText ? "(set)" : "", url: weatherPicker.urlText,
+                error: weatherPicker.error, text: app.weatherText
+            });
+        }
     }
     readonly property var theme: session ? session.theme.snapshot : themeInputs.snapshot
     Theme { id: themeInputs; registerIpc: !app.session }
@@ -476,6 +496,14 @@ Item {
                 }
                 Item { Layout.fillWidth: true }
                 LabelText { text: !app.scan ? "" : app.scan.productName.toUpperCase() + (app.scan.scanTime ? " / " + app.scan.elevationDeg.toFixed(1) + "°" : "") }
+                LabelText {
+                    visible: !win.compact && !!app.weatherText
+                    text: app.weatherText
+                    color: Qt.alpha(app.theme.foreground, .55)
+                    font.pixelSize: 10
+                    font.letterSpacing: 1
+                    Layout.leftMargin: 10
+                }
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -744,6 +772,7 @@ Item {
                 }
                 GlyphButton { glyph: app.locked ? "lock" : "follow"; selected: app.locked; enabled: !!app.state; onClicked: app.toggleLock() }
                 Control { text: win.compact ? "⌂" : "⌂ LOCATION"; onClicked: locationPicker.show("") }
+                Control { text: win.compact ? "☁" : "☁ WEATHER"; onClicked: weatherPicker.show() }
                 Item { Layout.fillWidth: true }
                 // The treatment chip (DESIGN.md, treatment control): one
                 // low-emphasis control naming the treatment; click opens the
@@ -808,6 +837,15 @@ Item {
                 app.notice = name ? "LOCATION · " + name.toUpperCase() : "LOCATION · " + lat.toFixed(4) + ", " + lon.toFixed(4);
                 noticeTimer.restart();
             }
+          }
+          WeatherPicker {
+            id: weatherPicker
+            anchors.fill: parent
+            theme: app.theme
+            config: app.config
+            compact: win.compact
+            cardTop: layout.anchors.margins + mapFrame.y
+            onOpenChanged: if (open) forceActiveFocus();
           }
           // The treatment menu over the surface (not a Popup, which the
           // window overlay would draw outside the captured surface): a card

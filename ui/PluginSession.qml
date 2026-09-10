@@ -131,6 +131,7 @@ QtObject {
         span = next;
         hasView = true;
         persistTimer.restart();
+        applyWeather();
     }
 
     function setPlace(lat, lon, name) {
@@ -156,6 +157,7 @@ QtObject {
         persist();
         viewChanged();
         applyRadar();
+        applyWeather();
     }
 
     function resetView() {
@@ -174,6 +176,7 @@ QtObject {
         persist();
         viewChanged();
         applyRadar();
+        applyWeather();
     }
 
     function chooseRadar(id, lat, lon, name) {
@@ -241,7 +244,24 @@ QtObject {
         initialized = true;
         resolve();
         applyRadar();
+        applyWeather();
         persist();
+    }
+
+    function applyWeather() {
+        if (!engine.state || !ready) return;
+        var settings = Location.weatherSettings(config.values, config.weatherValues);
+        if (!settings.source) {
+            if (engine.state.weather) engine.send({ type: "set_weather", source: "" });
+            return;
+        }
+        var cmd = { type: "set_weather", source: settings.source, apiKey: settings.apiKey, url: settings.url };
+        if (settings.source !== "weewx") {
+            if (!hasView) return;
+            cmd.lat = Math.round(centerLat * 1000) / 1000;
+            cmd.lon = Math.round(centerLon * 1000) / 1000;
+        }
+        engine.send(cmd);
     }
 
     function applyTreatment() {
@@ -261,8 +281,9 @@ QtObject {
     property Connections configEvents: Connections {
         target: session.config
         function onReadyChanged() { session.resolve(); session.initialize(); }
-        function onValuesChanged() { if (session.initialized) { session.resolve(); session.applyRadar(); } }
-        function onLocationChanged() { if (!session.hasView) session.resolve(); if (session.initialized) session.applyRadar(); }
+        function onValuesChanged() { if (session.initialized) { session.resolve(); session.applyRadar(); session.applyWeather(); } }
+        function onWeatherValuesChanged() { if (session.initialized) session.applyWeather(); }
+        function onLocationChanged() { if (!session.hasView) session.resolve(); if (session.initialized) { session.applyRadar(); session.applyWeather(); } }
         function onTreatmentChanged() { session.applyTreatment(); }
         function onWeakFloorChanged() { session.applyTreatment(); }
     }

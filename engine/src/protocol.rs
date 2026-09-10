@@ -131,6 +131,43 @@ pub struct State {
     /// The tile sources (`docs/protocol.md`, `tile_ready`).
     pub basemap: Basemap,
     pub playing: bool,
+    /// Current conditions from the user's weather source, omitted when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weather: Option<Weather>,
+}
+
+/// `state.weather`: one current observation. Never carries the API key.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Weather {
+    pub source: String,
+    pub source_name: String,
+    pub status: WeatherStatus,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub observed_at: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature_c: Option<f64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub condition: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_kmh: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub humidity: Option<f64>,
+    pub attribution: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub message: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Copy, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum WeatherStatus {
+    Ok,
+    Loading,
+    Stale,
+    Unavailable,
+    Offline,
 }
 
 /// `state.basemap`: what draws the tiles and, for `osm`, whether it can.
@@ -363,6 +400,21 @@ pub enum Command {
     /// `places` to the sender; optional `lat`/`lon` order nearer matches first.
     SearchPlaces {
         query: String,
+        #[serde(default)]
+        lat: Option<f64>,
+        #[serde(default)]
+        lon: Option<f64>,
+    },
+    /// Choose or clear the current-conditions source. `apiKey` never appears
+    /// in `state`. An empty `source` turns the feed off.
+    #[serde(rename_all = "camelCase")]
+    SetWeather {
+        #[serde(default)]
+        source: String,
+        #[serde(default)]
+        api_key: String,
+        #[serde(default)]
+        url: String,
         #[serde(default)]
         lat: Option<f64>,
         #[serde(default)]

@@ -110,6 +110,10 @@ until_field lon -97.5
 until_field locationSource state
 state_at "$check_dir/state.json" 35.4 -97.5 || fail "Shift+H location did not write state.json" "$(cat "$check_dir/state.json")"
 grep -q home_site "$check_dir/config.toml" && fail "Shift+H wrote home_site into config.toml"
+call run weather
+for _ in {1..50}; do [[ $(quickshell ipc --pid "$pid" call weather status | grep -o '"open":[a-z]*' | cut -d: -f2) == true ]] && break; sleep .1; done
+expect 'Shift+W opens the weather source' true "$(quickshell ipc --pid "$pid" call weather status | grep -o '"open":[a-z]*' | cut -d: -f2)"
+quickshell ipc --pid "$pid" call weather close
 
 # The fix applies through the file watch: no report, the new key in force,
 # and an explicit centre outranking the weather location.
