@@ -38,7 +38,8 @@ Neither route adds coordinate overrides to config. The picker remains
 available through `Shift+H` and LOCATION after onboarding.
 
 Resolve the radar independently: configured `locked_radar`, then a remembered
-UI lock, then the nearest station to the resolved center. A configured radar
+UI lock, then the nearest station to the resolved center when it is within
+460 km. A configured radar
 alone does not resolve a location. Coordinates never imply a lock. Choosing a
 station in search locks it and centres the map on that site. `n` selects the
 nearest radar without moving the camera. Choosing a location through the
@@ -116,7 +117,14 @@ the machine's own state and weather files are not read unless
   `pan_down` `pan_up` `pan_right` (`h j k l` and the arrows), `zoom_in`
   (`+ =`), `zoom_out` (`-`), `reset` (`0`, the resolved location), `previous_frame` (`[`),
   `next_frame` (`]`), `play` (`Space`), `oldest` (`Home`), `newest` (`End`),
-  `pixels` `glyphs` `stipple` (`1 2 3`), `weak` (`w`), `help` (`?`), `close`
+  `pixels` `glyphs` `stipple` (`1 2 3`), `layer_radar` (`Shift+R`),
+  `layer_wind` `layer_pressure` `layer_water` (`4 5 6`), `layer_temp`
+  (`7`), `layer_precip` (`8`), `source_now`
+  (`Shift+O`), `source_gfs` (`Shift+G`), `source_ecmwf` (`Shift+E`),
+  `source_wrf` (`Shift+F`), `source_cdo` (`Shift+C`),
+  `source_meteostat` (`Shift+M`), `run_wrf` (`Shift+W`), `gramet`
+  (`Shift+A`), `altitude_down`
+  `altitude_up` (`Shift+[` `Shift+]`), `weak` (`w`), `help` (`?`), `close`
   (`Escape`).
   A value that is not a quoted string, a sequence Qt cannot parse, an
   unknown action, or a key another action already holds leaves that action

@@ -43,6 +43,33 @@ It is small (a few KB) so clients replace rather than merge.
  "timeline":[{"id":"...","scanTime":"...","status":"complete"}],
  "basemap":{"ne":{"version":"5.2.0-pre"},"osm":{"status":"ok","source":"OpenFreeMap",
             "version":"20260830_080001_pt","attribution":"OpenFreeMap © OpenMapTiles Data from OpenStreetMap"}},
+ "aviation":{"status":"idle","attribution":"NOAA Aviation Weather Center",
+            "station":null,"metar":null,"taf":null,"hazards":[],
+            "gramet":{"status":"idle","origin":null,"destination":null,"cruiseKt":0,
+                      "flightLevel":350,"distanceKm":0,"eteMin":0,"raw":"","coords":[],
+                      "legs":[]}},
+ "layers":{"attribution":"NOAA NEXRAD · Open-Meteo","sources":[
+   {"id":"nexrad","name":"NEXRAD","kind":"sweep","group":"report","model":""},
+   {"id":"now","name":"Open-Meteo now","kind":"analysis","group":"report","model":"best_match"},
+   {"id":"gfs","name":"GFS","kind":"model","group":"forecast","model":"gfs_global"},
+   {"id":"ecmwf","name":"ECMWF IFS","kind":"model","group":"forecast","model":"ecmwf_ifs025"},
+   {"id":"wrf","name":"WRF","kind":"local","group":"forecast","model":"wrf"},
+   {"id":"cdo","name":"NOAA CDO","kind":"archive","group":"report","model":""},
+   {"id":"meteostat","name":"Meteostat","kind":"archive","group":"report","model":""}],
+  "products":[
+   {"code":"REF","name":"Reflectivity","units":"dBZ","kind":"sweep",
+    "altitudes":[{"index":0,"name":"lowest cut","hpa":0}]},
+   {"code":"WIND","name":"Wind","units":"kt","kind":"field",
+    "altitudes":[{"index":0,"name":"SFC","hpa":0},{"index":2,"name":"5 000 ft · 850 hPa","hpa":850}]}]},
+ "wrf":{"status":"idle","image":"","lat":0,"lon":0,"message":"",
+        "estimate":{"widthKm":450,"heightKm":450,"areaKm2":202500,"dxKm":9,
+                    "hours":12,"cores":4,"levels":33,"nx":51,"ny":51,"cells":2500,
+                    "dtSec":54,"steps":800,"gribFiles":5,"downloadMin":4,
+                    "preprocessMin":2,"integrateMin":40,"totalMin":46,
+                    "totalMinLow":28,"totalMinHigh":85,"memoryMb":1600,
+                    "summary":"About 28–85 min for 450×450 km at 9 km, 12 h…"}},
+ "history":{"status":"idle","source":"","time":"","step":"day",
+            "attribution":"NOAA NCEI Climate Data Online · Meteostat","stations":[]},
  "playing":false}
 ```
 
@@ -155,6 +182,30 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   read, and name OpenFreeMap by its host before that. The UI shows
   `osm.attribution` verbatim whenever an `osm` tile is on screen. It is
   shared state: a change is broadcast like any other.
+- `aviation` is the briefing for the last settled `view_center`, fetched
+  only in live mode from NOAA's Aviation Weather Center. Archived daemons
+  and a live daemon that has not yet received a centre stay
+  `status` `idle`. After a centre arrives, `loading` is replaced by `ok`
+  (a METAR, TAF, or hazard), `unavailable` (the feed answered and nothing
+  was near the view), or `offline` (the feed could not be read). `station`
+  is the nearest METAR; `metar` and `taf` carry `raw` bulletin text and
+  `time` (observation or issue, ISO-8601). TAF may add `validFrom` /
+  `validTo`. `hazards` are SIGMET, AIRMET, GAMET, and issued GRAMET
+  bulletins whose polygons intersect the view, each with `kind`, `hazard`,
+  `raw`, and `coords` `[{lat,lon}, …]`. `aviation.gramet` is a separate
+  route briefing from `set_gramet` (origin and destination ICAO, cruise
+  TAS, optional flight level): `status`, airport fixes, `raw` text, an
+  open `coords` polyline, and sampled `legs`. It is not a GRIB file.
+  Radar values still never enter JSON; these are issued bulletins and
+  route text. `OMASTORM_AVIATION_URL` overrides the API root.
+- `history` is the CDO / Meteostat time cursor. Archived daemons and a
+  live daemon that has not selected those sources stay `status` `idle`.
+  After `set_source` `cdo` or `meteostat`, `loading` is replaced by `ok`
+  (stations in the view), `unavailable`, or `offline`. `time` is an ISO
+  date (`cdo`, one day) or hour (`meteostat`). `stations` are the
+  reports that built the field texture. `OMASTORM_CDO_URL`,
+  `OMASTORM_METEOSTAT_URL`, and `OMASTORM_METEOSTAT_STATIONS` override
+  the fetch roots.
 
 ## Client commands
 
@@ -166,6 +217,12 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 {"type":"search_places","query":"norman","lat":35.4,"lon":-97.5}
 {"type":"play"}  {"type":"pause"}  {"type":"step","delta":-1}  {"type":"seek","id":"..."}
 {"type":"set_product","product":"REF","elevationIndex":0}
+{"type":"set_source","source":"gfs"}
+{"type":"set_gramet","origin":"SCEL","destination":"SCFA","cruiseKt":420,"flightLevel":350}
+{"type":"seek_history","time":"2020-01-15"}
+{"type":"step_history","delta":-1}
+{"type":"estimate_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
+{"type":"run_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
 {"type":"tiles_needed","z":11,"x0":469,"y0":807,"x1":472,"y1":810}
 ```
 
@@ -176,19 +233,22 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   nothing. An id outside the table is answered with an `error`.
 - `view_center` is sent when a pan or zoom settles and the centre moved, not
   per frame. With `follow` on and `lock` off, the engine hands off to the
-  station nearest the centre by great-circle distance when that station beats
-  the current one by the hysteresis rule (closer than 0.8 of the current
-  station's distance and by at least 1 km, so a centre between two stations
-  keeps whichever it has; the dead band is about a twentieth of the spacing
-  either side of the midpoint); the hand-off is a `select_site`, so `state`
-  is broadcast and an uncached station opens on the loading placeholder.
-  Locked or not following, or when the current station stays nearest,
-  nothing changes and nothing is sent. The engine never moves the camera:
+  station nearest the centre by great-circle distance when that station is
+  within 460 km and beats the current one by the hysteresis rule (closer
+  than 0.8 of the current station's distance and by at least 1 km, so a
+  centre between two stations keeps whichever it has; the dead band is
+  about a twentieth of the spacing either side of the midpoint); the
+  hand-off is a `select_site`, so `state` is broadcast and an uncached
+  station opens on the loading placeholder. When every table station is
+  farther than 460 km, the engine leaves the sweep and shows the map
+  without radar, sited on the view centre. Live mode also refreshes
+  `aviation` for that centre. Locked or not following, the radar is left
+  alone and the briefing still updates. The engine never moves the camera:
   the centre is the user's. A latitude outside ±90 or a longitude outside
   ±180 is answered with an `error`. `lock` and `follow` are shared flags;
   releasing the lock hands off on the next settle, not at once.
 - `search_places` ranks the embedded gazetteer (GeoNames populated places
-  with population ≥ 5000, clipped to the NEXRAD network envelope) for the
+  with population ≥ 5000, worldwide) for the
   location picker and is answered with `places` to the sender only, like
   `tile_ready`. Map labels stay on Natural Earth. `query` is required;
   optional `lat` and `lon` order nearer matches first. Word-start matches
@@ -203,8 +263,46 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 ```
   `region` is the admin-1 name (a US state, a Canadian province);
   `country` is the ISO 3166-1 alpha-2 code. Either may be omitted when empty.
-- `set_product` requests a product and elevation. An unsupported selection
+- `set_product` requests a product and elevation (or field altitude) from
+  `state.layers`. `REF` at index 0 is the Level II sweep. `WIND`, `PRES`,
+  and `WATER` are live field layers; `elevationIndex` selects an altitude
+  from that product's list (surface plus 925 / 850 / 700 / 500 / 300 hPa).
+  `TEMP` and `PRECIP` are surface field layers (Open-Meteo now/models, or
+  CDO / Meteostat station reports). Field layers are polar rasters around
+  the view centre; `frame.kind` is `field` and `frame.altitudeName` names
+  the cut. Archived mode rejects field products. An unsupported selection
   returns an `error` to its sender and retains the current frame.
+- `set_source` selects a layer source from `state.layers.sources`. `nexrad`
+  is the Level II sweep (a report). `now` is Open-Meteo's latest analysis
+  hour (`best_match`). `gfs` and `ecmwf` are forecast models. `wrf` is a
+  local Docker forecast; it does not start a run. `cdo` is NOAA NCEI
+  daily summaries (one day per step). `meteostat` is hourly station
+  dumps (one hour per step). Both are live-only report archives; they
+  open on `TEMP` unless `TEMP` or `PRECIP` is already selected.
+- `set_gramet` builds a live route GRAMET from four-letter ICAO origin
+  and destination, cruise TAS (80–550 kt), and optional flight level
+  (50–450, default 350). The engine resolves the airports from AWC
+  stationinfo and samples Open-Meteo along the great-circle. Archived
+  mode rejects it. A bad ICAO or TAS is an `error` to the sender.
+- `seek_history` jumps the CDO / Meteostat cursor to an ISO date or
+  hour. `step_history` moves `delta` days (`cdo`) or hours
+  (`meteostat`) and clamps to the archive window. Both need a history
+  source in live mode.
+- `estimate_wrf` fills `state.wrf.estimate` for the named centre and domain.
+  `widthKm` / `heightKm` are the domain sides (the map span is a good
+  default). Omit `dxKm` to pick a spacing from the span (3 / 9 / 15 km).
+  Omit `hours` for 12 h, `cores` for the host's CPUs. The estimate is a
+  desktop GNU WRF order-of-magnitude: GFS download, WPS/real, and
+  `wrf.exe`. Integration scales with cell count × levels × timesteps /
+  cores; timesteps follow the ARW CFL rule (dt seconds ≈ 6 × Δx km), so
+  a finer grid costs about Δx⁻³. The summary names a low–high minute
+  band. This is not a reservation.
+- `run_wrf` recomputes that estimate, then starts
+  `scripts/wrf-forecast.sh` against `OMASTORM_WRF_IMAGE` (default
+  `ncar/wrf_tutorial:latest`). Ordinary launch never does this. Live
+  only. Status is `queued` / `running` / `ok` / `failed` / `missing_docker`.
+  Working files stay under `$XDG_CACHE_HOME/omastorm/wrf/`. Raw wrfout
+  stays there; it is not a protocol texture.
 - `step` moves `delta` entries along `timeline` from the frame shown, stopping
   at the ends; `seek` shows the entry with `id`. Both stop playback. A stepped
   frame's textures are republished under new `tex/` paths with the frame's

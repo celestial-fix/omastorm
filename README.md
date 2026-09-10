@@ -24,8 +24,17 @@ client: it displays those textures in the bar popover and full window.
 
 - **Live.** A Rust engine polls NOAA's public Level II feed and sweeps paint as
   the antenna turns. Stale data says it is stale.
-- **Every site.** Pan the map and it follows the nearest station, or search by
-  id, city, or state.
+- **Every site.** Pan the map and it follows the nearest station in range, or
+  search by id, city, or country. Places worldwide, including Santiago,
+  search; outside the NEXRAD footprint the map stands without a distant sweep.
+- **Aviation briefing.** Live METAR, TAF, SIGMET, AIRMET, and GAMET for
+  the view, from NOAA's Aviation Weather Center, plus a route GRAMET from
+  origin and destination ICAO and cruise TAS. Hazard polygons and the
+  route track draw on the map.
+- **Field layers.** Live wind, pressure, water, temperature, and
+  precipitation. Reports (NEXRAD, Open-Meteo now, NOAA CDO, Meteostat)
+  stay separate from forecasts (GFS, ECMWF IFS, optional local WRF).
+  CDO and Meteostat travel in time by day or hour.
 - **Timeline.** Up to 60 scans per station, cached locally. Play, step, scrub.
 - **Three treatments.** Glyphs, Pixels, and Stipple sample the same gate and
   paint the cell differently.
@@ -98,9 +107,16 @@ cannot be reached, with cached frames kept.
 | `Shift+L` | Lock the station |
 | `Shift+H` | Choose a location |
 | `Space` | Loop the frames |
-| `[` `]` | Step a frame |
-| `Home` `End` | Oldest or newest frame |
+| `[` `]` | Step a frame, or a CDO day / Meteostat hour |
+| `Home` `End` | Oldest or newest frame, or the archive window |
 | `1` `2` `3` | Pixels, Glyphs, Stipple |
+| `4` `5` `6` `7` `8` | Wind, pressure, water, temperature, precipitation |
+| `Shift+O` `Shift+G` `Shift+E` `Shift+F` | Now, GFS, ECMWF, WRF sources |
+| `Shift+C` `Shift+M` | NOAA CDO and Meteostat archives |
+| `Shift+A` | Route GRAMET (origin, destination, TAS) |
+| `Shift+W` | Run local WRF (after the time estimate) |
+| `Shift+[` `Shift+]` | Layer altitude |
+| `Shift+R` | Radar (reflectivity) |
 | `w` | Show weak returns |
 | `?` | Keys sheet |
 | `Esc` | Close |
@@ -180,7 +196,11 @@ This is a beta. Bugs, rough edges, and ideas go to
 
 ## Data and licenses
 
-Radar: NOAA NEXRAD Level II via the NOAA Open Data program on AWS. Basemap: ©
+Radar: NOAA NEXRAD Level II via the NOAA Open Data program on AWS. Aviation
+briefing: NOAA Aviation Weather Center (METAR, TAF, SIGMET, AIRMET, GAMET,
+issued GRAMET) and a route GRAMET sampled from Open-Meteo. Historical
+reports: NOAA NCEI Climate Data Online and [Meteostat](https://meteostat.net).
+Basemap: ©
 OpenStreetMap contributors, [ODbL](https://opendatacommons.org/licenses/odbl/1-0/),
 tiles by [OpenFreeMap](https://openfreemap.org); Natural Earth, public domain.
 Location search: [GeoNames](https://www.geonames.org/),

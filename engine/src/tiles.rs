@@ -265,7 +265,7 @@ impl Geography {
     }
 }
 
-/// GeoNames cities with population ≥ 5000, clipped to the NEXRAD envelope.
+/// GeoNames cities with population ≥ 5000, worldwide.
 /// Location search uses this; map labels stay on Natural Earth `places`.
 fn gazetteer() -> &'static [Place] {
     static GAZETTEER_PLACES: OnceLock<Vec<Place>> = OnceLock::new();
@@ -457,7 +457,7 @@ pub fn render(geography: &Geography, key: TileKey) -> io::Result<Vec<u8>> {
 }
 
 /// Ranked gazetteer places matching `query` for the location picker
-/// (GeoNames ≥ 5000 people in the network envelope). Word-start matches
+/// (GeoNames ≥ 5000 people worldwide). Word-start matches
 /// beat substrings; nearer the optional origin, then lower rank, win
 /// within a tier. Empty or blank queries return nothing.
 pub fn search_places(query: &str, origin: Option<(f64, f64)>, limit: usize) -> Vec<Label> {
@@ -806,6 +806,9 @@ mod tests {
         let stokesdale = search_places("stokesdale", None, 4);
         assert_eq!(stokesdale[0].name, "Stokesdale");
         assert_eq!(stokesdale[0].region, "North Carolina");
+        let santiago = search_places("santiago", Some((-33.45, -70.67)), 8);
+        assert_eq!(santiago[0].name, "Santiago");
+        assert_eq!(santiago[0].country, "CL");
         assert!(gazetteer().len() > 15_000);
         assert!(gazetteer().len() > Geography::embedded().places.len());
     }

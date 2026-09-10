@@ -257,6 +257,10 @@ mod tests {
             },
             palette: vec!["#000000".into()],
             bounds: vec![0, 10],
+            kind: String::new(),
+            altitude_hpa: 0,
+            altitude_name: String::new(),
+            layer_source: String::new(),
         }
     }
 

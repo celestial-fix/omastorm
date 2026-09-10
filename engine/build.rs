@@ -2,9 +2,8 @@
 //! extracts into the geography the binary embeds (DESIGN.md, basemap tiles,
 //! shipped geography): one polyline blob holding the 1:50m world set and the
 //! 1:10m set clipped to the NEXRAD network envelope, and the populated places
-//! for low-zoom labels. GeoNames cities with population ≥ 5000, clipped to
-//! the same envelope, become the location-picker gazetteer. Reruns only when
-//! an input changes.
+//! for low-zoom labels. GeoNames cities with population ≥ 5000 worldwide
+//! become the location-picker gazetteer. Reruns only when an input changes.
 //!
 //! Blob layout (`ne.bin`, read by `src/tiles.rs`): the magic `OMNE\x01`, then
 //! for each of the two sets (1:50m, 1:10m) and each of its two layers
@@ -144,8 +143,8 @@ fn main() {
     write_gazetteer(&raw, Path::new(&out));
 }
 
-/// GeoNames `cities5000` clipped to the NEXRAD envelope, for the location
-/// picker only. Map labels stay on Natural Earth (`places.json`).
+/// GeoNames `cities5000` worldwide, for the location picker only. Map
+/// labels stay on Natural Earth (`places.json`).
 fn write_gazetteer(raw: &Path, out: &Path) {
     let mut admin1 = std::collections::HashMap::new();
     for line in fs::read_to_string(raw.join("admin1CodesASCII.txt"))
@@ -180,9 +179,6 @@ fn write_gazetteer(raw: &Path, out: &Path) {
         else {
             continue;
         };
-        if !in_envelope(lon, lat) {
-            continue;
-        }
         let class = if fcode == "PPLC" {
             "capital"
         } else if pop >= 100_000.0 {

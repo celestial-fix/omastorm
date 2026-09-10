@@ -77,7 +77,53 @@ per frame. New live sweeps take the screen only while the newest entry is select
 
 The station table's source, retrieval date, and caveats are in `data/sites.json`
 and hello. It includes archived and test sites; membership does not imply live
-availability. An archived scan retains its measured coordinates.
+availability. An archived scan retains its measured coordinates. Following
+selects a station only when it lies within 460 km of the view centre.
+
+## Aviation
+
+Live `view_center` fetches a briefing from NOAA's Aviation Weather Center:
+the nearest METAR in a 2° box, its TAF, and SIGMET / AIRMET / GAMET /
+issued GRAMET hazards in a 5° box. `set_gramet` builds a route GRAMET
+from origin and destination ICAO plus cruise TAS (optional flight
+level): AWC stationinfo plus Open-Meteo samples along the great-circle.
+Archived mode and ordinary checks never fetch. `OMASTORM_AVIATION_URL`
+overrides the API root. The UI shows issued bulletin text, hazard
+polygons, and the route polyline; it does not decode GRIB or NetCDF.
+
+## Field layers
+
+Live `set_product` for `WIND`, `PRES`, `WATER`, `TEMP`, or `PRECIP`
+fetches the current hour from Open-Meteo on a small grid around the view
+centre and rasterizes a polar sweep the existing shader draws. Surface is
+10 m wind, MSLP, 2 m humidity, 2 m temperature, and precipitation; aloft
+is wind, isobar height, and humidity at 925–300 hPa. `set_source` chooses
+`now` (report / `best_match`), `gfs`, or `ecmwf`. `OMASTORM_FIELDS_URL`
+overrides the API root. Archived mode does not fetch.
+
+## Historical reports
+
+`set_source` `cdo` or `meteostat` walks station archives in live mode.
+CDO uses NCEI daily-summaries in a box around the view (one day per
+`step_history`). Meteostat uses hourly dumps for the nearest stations
+(one hour per step). Both rasterize `TEMP` or `PRECIP` onto the field
+texture. Station lists and yearly CSVs cache under
+`$XDG_CACHE_HOME/omastorm/`. `OMASTORM_CDO_URL`,
+`OMASTORM_METEOSTAT_URL`, and `OMASTORM_METEOSTAT_STATIONS` override the
+roots.
+
+## Local WRF
+
+`estimate_wrf` / `run_wrf` drive `scripts/wrf-forecast.sh`. The estimate
+uses domain area, Δx, forecast length, vertical levels, and CPU cores.
+Integration time is pinned to a 450×450 km / 15 km / 33-level / 6 h / 4
+core reference (~10 min of `wrf.exe`); it scales with cells × levels ×
+timesteps / (cores × efficiency). Timesteps follow dt ≈ 6 s per km of
+Δx, so a finer grid is about Δx⁻³ more expensive. Download and WPS/real
+are added separately. The band is 0.6×–1.8× that total. Ordinary
+`run.sh` never starts Docker. `OMASTORM_WRF_IMAGE` names the container
+(default `ncar/wrf_tutorial:latest`). Geography belongs in
+`OMASTORM_WRF_GEOG`. Work stays under `$XDG_CACHE_HOME/omastorm/wrf/`.
 
 ## Basemap
 
