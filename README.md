@@ -44,6 +44,9 @@ client: it displays those textures in the bar popover and full window.
   key is rebindable.
 - **Honest.** Actual scan times. Missing, range-folded, and below-threshold
   returns are drawn distinctly from measured values. Displays individual radar sweeps.
+- **Your weather source.** Optionally show current conditions from WeeWX,
+  WeatherAPI, OpenWeatherMap, Tomorrow.io, or Visual Crossing using the key
+  you already have. Choose the source in the window (`Shift+W`).
 
 ## Install
 
@@ -106,6 +109,7 @@ cannot be reached, with cached frames kept.
 | `n` | Nearest site |
 | `Shift+L` | Lock the station |
 | `Shift+H` | Choose a location |
+| `Shift+W` | Weather source |
 | `Space` | Loop the frames |
 | `[` `]` | Step a frame, or a CDO day / Meteostat hour |
 | `Home` `End` | Oldest or newest frame, or the archive window |
@@ -114,7 +118,7 @@ cannot be reached, with cached frames kept.
 | `Shift+O` `Shift+G` `Shift+E` `Shift+F` | Now, GFS, ECMWF, WRF sources |
 | `Shift+C` `Shift+M` | NOAA CDO and Meteostat archives |
 | `Shift+A` | Route GRAMET (origin, destination, TAS) |
-| `Shift+W` | Run local WRF (after the time estimate) |
+| `Shift+X` | Run local WRF (after the time estimate) |
 | `Shift+[` `Shift+]` | Layer altitude |
 | `Shift+R` | Radar (reflectivity) |
 | `w` | Show weak returns |

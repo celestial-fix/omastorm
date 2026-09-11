@@ -36,7 +36,8 @@ Textures are written, synced, and renamed to unique paths. Cleanup checks
 state references once a second and removes textures unreferenced for 30 seconds.
 The grace period starts when observed, so a restart preserves recently served
 textures. Transport, commands, state, and texture encoding are defined in
-[docs/protocol.md](../docs/protocol.md).
+[docs/protocol.md](../docs/protocol.md). `set_weather` fetches one current
+observation from the user's source; the API key is not written to `state`.
 
 ## Radar
 

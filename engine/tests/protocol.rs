@@ -685,3 +685,37 @@ fn launcher_retries_a_slow_hello_within_its_startup_budget() {
     drop(lock);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn weather_command_is_validated_and_omitted_when_off() {
+    let _serial = serial();
+    let engine = Engine::start();
+    let mut client = engine.connect();
+    assert_eq!(read(&mut client)["type"], "hello");
+    let initial = state(&mut client, |_| true);
+    assert!(initial.get("weather").is_none());
+    send(
+        &mut client,
+        json!({"type":"set_weather","source":"nws","apiKey":"x","lat":35.0,"lon":-97.0}),
+    );
+    let e = read(&mut client);
+    assert_eq!(e["type"], "error");
+    assert_eq!(e["command"], "set_weather");
+    send(
+        &mut client,
+        json!({"type":"set_weather","source":"openweathermap","lat":35.0,"lon":-97.0}),
+    );
+    let e = read(&mut client);
+    assert_eq!(e["type"], "error");
+    assert!(e["message"].as_str().unwrap().contains("apiKey"));
+    send(
+        &mut client,
+        json!({"type":"set_weather","source":"weewx","url":"ftp://station.local/data.json"}),
+    );
+    let e = read(&mut client);
+    assert_eq!(e["type"], "error");
+    send(&mut client, json!({"type":"set_weather","source":""}));
+    send(&mut client, json!({"type":"follow","enabled":false}));
+    let s = state(&mut client, |s| s["site"]["follow"] == false);
+    assert!(s.get("weather").is_none());
+}

@@ -70,8 +70,18 @@ It is small (a few KB) so clients replace rather than merge.
                     "summary":"About 28–85 min for 450×450 km at 9 km, 12 h…"}},
  "history":{"status":"idle","source":"","time":"","step":"day",
             "attribution":"NOAA NCEI Climate Data Online · Meteostat","stations":[]},
- "playing":false}
+ "playing":false,
+ "weather":{"source":"openweathermap","sourceName":"OpenWeatherMap","status":"ok",
+            "observedAt":"2026-09-10T16:00:00+00:00","name":"Stokesdale",
+            "temperatureC":22.1,"condition":"overcast clouds","windKmh":10.8,
+            "humidity":64,"attribution":"OpenWeatherMap"}}
 ```
+
+`weather` is omitted when the user has not chosen a source. It is one current
+observation from their API or WeeWX station, never a forecast, and never
+carries the API key. `status` is `ok`, `loading`, `stale` (observation older
+than 30 minutes), `unavailable` (the source answered but not with a usable
+observation, including a rejected key), or `offline` (unreachable).
 
 - `source`: `archived` | `live`. The daemon starts `live` with no station:
   `site.id` is empty, `connection.status` is `loading`, the frame is the
@@ -224,6 +234,9 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 {"type":"estimate_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
 {"type":"run_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
 {"type":"tiles_needed","z":11,"x0":469,"y0":807,"x1":472,"y1":810}
+{"type":"set_weather","source":"openweathermap","apiKey":"…","lat":36.237,"lon":-79.979}
+{"type":"set_weather","source":"weewx","url":"http://192.168.1.8:8080/data.json"}
+{"type":"set_weather","source":""}
 ```
 
 - `select_site` names a station from `hello.sites`. The engine goes
@@ -310,6 +323,14 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   and a move that lands where it already is changes nothing. `play` starts
   the loop when the timeline holds at least two complete frames (otherwise
   nothing changes); `pause` stops it and leaves the frame shown.
+- `set_weather` chooses the current-conditions source. `source` is `weewx`,
+  `weatherapi`, `openweathermap`, `tomorrow`, or `visualcrossing`; empty
+  turns the feed off. Cloud sources need `apiKey` and `lat`/`lon` (the map
+  centre). WeeWX needs `url` (`http` or `https`). The engine stores the key
+  only in memory, fetches the current observation, and publishes `state.weather`
+  without the key. A bad source, missing key or URL, or out-of-range
+  coordinate is answered with an `error`. Repeating the same request
+  changes nothing.
 - `tiles_needed` is the visible inclusive rectangle at one zoom, at
   most 64 tiles, sent when the viewport settles; it names no set (the engine
   chooses, see `tile_ready`). The engine serves it centre-out, and a newer

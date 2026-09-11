@@ -8,6 +8,7 @@ mod osm;
 mod protocol;
 mod sweep;
 mod tiles;
+mod weather;
 mod wrf;
 
 use catalog::Entry;
@@ -508,6 +509,7 @@ fn initial_state(
         wrf: wrf::idle(),
         history: history::idle(),
         playing: false,
+        weather: None,
     }
 }
 fn line(message: &Message) -> String {
@@ -572,6 +574,9 @@ struct Shared {
     gramet_req: Option<gramet::Request>,
     gramet_wake: Arc<Notify>,
     history_wake: Arc<Notify>,
+    /// The current-conditions request; the key lives here, not in `state`.
+    weather_request: Option<weather::Request>,
+    weather_wake: Arc<Notify>,
 }
 impl Shared {
     fn snapshot(&mut self) -> String {
@@ -1202,6 +1207,36 @@ impl Shared {
             self.broadcast();
         }
     }
+    fn set_weather(
+        &mut self,
+        source: &str,
+        api_key: &str,
+        url: &str,
+        lat: Option<f64>,
+        lon: Option<f64>,
+    ) -> (bool, Option<String>) {
+        match weather::parse_request(source, api_key, url, lat, lon) {
+            Err(message) => (false, Some(message)),
+            Ok(None) => {
+                let changed = self.weather_request.is_some() || self.state.weather.is_some();
+                self.weather_request = None;
+                self.state.weather = None;
+                if changed {
+                    self.weather_wake.notify_one();
+                }
+                (changed, None)
+            }
+            Ok(Some(request)) => {
+                if self.weather_request.as_ref() == Some(&request) {
+                    return (false, None);
+                }
+                self.state.weather = Some(weather::loading(&request));
+                self.weather_request = Some(request);
+                self.weather_wake.notify_one();
+                (true, None)
+            }
+        }
+    }
     /// A well-formed command from a client; the reader has already logged
     /// `Unsupported` ones by name. Broadcasts if anything changed and returns
     /// the message for the sender when the command could not be carried out;
@@ -1276,6 +1311,13 @@ impl Shared {
             Command::SeekHistory { time } => self.seek_history(&time),
             Command::StepHistory { delta } => self.step_history(delta),
             // Tile requests and place search are answered to the sender, not state.
+            Command::SetWeather {
+                source,
+                api_key,
+                url,
+                lat,
+                lon,
+            } => self.set_weather(&source, &api_key, &url, lat, lon),
             Command::TilesNeeded { .. } | Command::SearchPlaces { .. } | Command::Unsupported => {
                 return None;
             }
@@ -1746,6 +1788,52 @@ fn report(shared: &Mutex<Shared>, site: &str, reason: &str, condition: Connectio
     eprintln!("Live {site}: {reason}");
     if set(&mut shared.state.connection.status, condition) {
         shared.broadcast();
+    }
+}
+/// Current conditions for the configured weather source. The key stays in
+/// `Shared`; only the observation is broadcast.
+async fn weather_poll(shared: Arc<Mutex<Shared>>, wake: Arc<Notify>) {
+    let client = match weather::client() {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("Weather client: {e}");
+            return;
+        }
+    };
+    loop {
+        let request = shared.lock().unwrap().weather_request.clone();
+        let Some(request) = request else {
+            wake.notified().await;
+            continue;
+        };
+        let interval = request.poll_every();
+        match weather::fetch(&client, &request).await {
+            Ok(observation) => {
+                let mut shared = shared.lock().unwrap();
+                if shared.weather_request.as_ref() != Some(&request) {
+                    continue;
+                }
+                if set(&mut shared.state.weather, Some(observation)) {
+                    shared.broadcast();
+                }
+            }
+            Err(e) => {
+                let mut shared = shared.lock().unwrap();
+                if shared.weather_request.as_ref() != Some(&request) {
+                    continue;
+                }
+                let Some(weather) = shared.state.weather.as_mut() else {
+                    continue;
+                };
+                let changed = weather.status != e.status || weather.message != e.message;
+                weather.status = e.status;
+                weather.message.clone_from(&e.message);
+                if changed {
+                    shared.broadcast();
+                }
+            }
+        }
+        let _ = timeout(interval, wake.notified()).await;
     }
 }
 /// Playback: woken by `play`, it advances the timeline one frame per
@@ -2227,6 +2315,7 @@ fn serve(dir: PathBuf) -> io::Result<()> {
     let gramet_client = Arc::new(gramet::Client::open()?);
     let history_wake = Arc::new(Notify::new());
     let history_client = Arc::new(history::Client::open()?);
+    let weather_wake = Arc::new(Notify::new());
     let shared = Arc::new(Mutex::new(Shared {
         state: initial_state(frame, osm.info(), source, status),
         tiles: tile_store,
@@ -2255,6 +2344,8 @@ fn serve(dir: PathBuf) -> io::Result<()> {
         gramet_req: None,
         gramet_wake: gramet_wake.clone(),
         history_wake: history_wake.clone(),
+        weather_request: None,
+        weather_wake: weather_wake.clone(),
     }));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -2275,6 +2366,7 @@ fn serve(dir: PathBuf) -> io::Result<()> {
     runtime.spawn(wrf_loop(shared.clone(), wrf_wake));
     runtime.spawn(gramet_loop(shared.clone(), gramet_client, gramet_wake));
     runtime.spawn(history_loop(shared.clone(), history_client, history_wake));
+    runtime.spawn(weather_poll(shared.clone(), weather_wake));
     let cleanup_shared = shared.clone();
     runtime.spawn(async move {
         let mut retirement = Retirement::default();

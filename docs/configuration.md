@@ -19,6 +19,7 @@ without removing deliberate preferences. Missing or invalid state falls back
 to the remaining location sources; it must not prevent startup. Keep state
 small and write it atomically after movement settles or the lock changes.
 Do not store credentials, radar data, or copies of all config preferences there.
+API keys belong in `weather.toml` or `[weather]` in config.toml.
 
 ## Launch and onboarding
 
@@ -26,9 +27,15 @@ Resolve the map center from the first valid source:
 
 1. The complete configured `center_lat` / `center_lon` pair.
 2. The remembered map center in state.
-3. Omarchy's weather coordinates in
-   `~/.local/state/omarchy/settings/weather.json` (`name`, `latitude`,
-   `longitude`). File existence alone is insufficient; coordinates must be valid.
+3. Weather coordinates in
+   `~/.local/state/omarchy/settings/weather.json`. Omarchy writes
+   `name`, `latitude`, and `longitude`. The same file may hold a WeeWX
+   station object or a WeatherAPI, OpenWeatherMap, Tomorrow.io, or
+   Visual Crossing response: nested `location` / `coord` / `station`
+   objects, `lat`/`lon` (or `lng`), Visual Crossing's `resolvedAddress`,
+   and a GeoJSON Point are accepted. File existence alone is insufficient;
+   coordinates must be valid and in range. A name without coordinates is
+   not a place.
 4. The location picker: search for a place or enter latitude and longitude.
 
 A missing location opens a "Choose a location" prompt in the popover; its
@@ -56,6 +63,13 @@ view. Weather changes do not reset a remembered location.
 # Always open centered here. Set both; omit both to remember the last position.
 center_lat = 36.23708
 center_lon = -79.97948
+
+# Optional current conditions (or use ~/.config/omastorm/weather.toml).
+# [weather]
+# source = "openweathermap"  # weewx, weatherapi, openweathermap, tomorrow, visualcrossing
+# api_key = "..."
+# url = "http://192.168.1.8:8080/data.json"  # WeeWX only
+
 
 # Optional: use this radar on launch regardless of map center.
 # Omit to restore the UI lock, or select automatically when no lock is remembered.
@@ -113,7 +127,7 @@ the machine's own state and weather files are not read unless
   it. Anything else is reported like a bad `treatment` and leaves the default.
 - `[keys]`: one entry per action, laid over the defaults in `ui/Keys.js`:
   `search` (`/ s`), `nearest` (`n`), `lock` (`Shift+L`), `home` (`Shift+H`,
-  the location picker), `pan_left`
+  the location picker), `weather` (`Shift+W`, the weather source), `pan_left`
   `pan_down` `pan_up` `pan_right` (`h j k l` and the arrows), `zoom_in`
   (`+ =`), `zoom_out` (`-`), `reset` (`0`, the resolved location), `previous_frame` (`[`),
   `next_frame` (`]`), `play` (`Space`), `oldest` (`Home`), `newest` (`End`),
@@ -122,7 +136,7 @@ the machine's own state and weather files are not read unless
   (`7`), `layer_precip` (`8`), `source_now`
   (`Shift+O`), `source_gfs` (`Shift+G`), `source_ecmwf` (`Shift+E`),
   `source_wrf` (`Shift+F`), `source_cdo` (`Shift+C`),
-  `source_meteostat` (`Shift+M`), `run_wrf` (`Shift+W`), `gramet`
+  `source_meteostat` (`Shift+M`), `run_wrf` (`Shift+X`), `gramet`
   (`Shift+A`), `altitude_down`
   `altitude_up` (`Shift+[` `Shift+]`), `weak` (`w`), `help` (`?`), `close`
   (`Escape`).
@@ -145,6 +159,26 @@ the UI radar lock when one is set:
 ```
 
 Invalid fields are dropped. A missing file is no remembered view.
-`OMASTORM_LOCATION` names another weather.json (`name`, `latitude`,
-`longitude`, written by the shell's weather panel) for checks; coordinates
-outside ±90/±180 are ignored.
+`OMASTORM_LOCATION` names another weather.json for checks (Omarchy's
+`name` / `latitude` / `longitude`, or a weather-API / WeeWX payload with
+coordinates); values outside ±90/±180 are ignored.
+`OMASTORM_WEATHER` names another weather.toml for checks.
+
+## Current conditions
+
+A chosen source shows one current observation in the window and popover
+(temperature, condition, source name, observation time). It does not replace
+NEXRAD and does not draw a forecast.
+
+Pick the source in the window (`Shift+W` or WEATHER): WeeWX, WeatherAPI,
+OpenWeatherMap, Tomorrow.io, or Visual Crossing. Cloud sources need the API
+key you already have. WeeWX needs the station's JSON URL (`http` or `https`).
+SAVE writes `~/.config/omastorm/weather.toml` and leaves `config.toml` and
+`state.json` alone. CLEAR turns the feed off. The same keys may live under
+`[weather]` in `config.toml`; the dedicated file wins when both are set.
+
+The UI sends `set_weather` with the source, key or URL, and the map centre.
+The engine fetches current conditions only. The key is not logged, not stored
+in `state.json`, and not present on the `state` broadcast. Checks that set
+`OMASTORM_CONFIG` do not read the machine weather file unless
+`OMASTORM_WEATHER` names one.

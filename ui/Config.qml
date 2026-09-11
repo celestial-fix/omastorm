@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "Toml.js" as Toml
+import "Location.js" as Location
 
 // ~/.config/omastorm/config.toml (docs/protocol.md, configuration):
 // deliberate preferences — an explicit map centre, a locked radar, the
@@ -19,11 +20,15 @@ QtObject {
     readonly property string locationPath: Quickshell.env("OMASTORM_LOCATION")
         || (Quickshell.env("OMASTORM_CONFIG") ? "" : Quickshell.env("HOME") + "/.local/state/omarchy/settings/weather.json")
     property var values: ({})
-    // False until both files have been read or found missing, so a surface
-    // can wait for them before acting on the engine's first state.
-    readonly property bool ready: configRead && locationRead
+    // False until config, location, and weather files have been read or
+    // found missing, so a surface can wait before acting on the first state.
+    readonly property string weatherPath: Quickshell.env("OMASTORM_WEATHER")
+        || (Quickshell.env("OMASTORM_CONFIG") ? "" : Quickshell.env("HOME") + "/.config/omastorm/weather.toml")
+    readonly property bool ready: configRead && locationRead && weatherRead
     property bool configRead: false
     property bool locationRead: false
+    property bool weatherRead: false
+    property var weatherValues: ({})
     readonly property var centerLat: typeof values.center_lat === "number" ? values.center_lat : undefined
     readonly property var centerLon: typeof values.center_lon === "number" ? values.center_lon : undefined
     readonly property string lockedRadar: typeof values.locked_radar === "string" ? values.locked_radar.trim().toUpperCase() : ""
@@ -37,8 +42,9 @@ QtObject {
         for (var key in values) if (key.indexOf("keys.") === 0) table[key.slice(5)] = values[key];
         return table;
     }
-    // { name, lat, lon } from weather.json, or null when the file is
-    // missing, unreadable, or has no coordinates.
+    // { name, lat, lon } from weather.json (Omarchy or a weather-API /
+    // WeeWX payload with coordinates), or null when the file is missing,
+    // unreadable, or has no coordinates.
     property var location: null
     property FileView file: FileView {
         path: root.path
@@ -56,13 +62,28 @@ QtObject {
         onLoaded: { root.location = root.parseLocation(text()); root.locationRead = true; }
         onLoadFailed: { root.location = null; root.locationRead = true; }
     }
-    function parseLocation(raw) {
-        try {
-            var json = JSON.parse(raw);
-            var lat = Number(json.latitude), lon = Number(json.longitude);
-            if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
-            return { name: typeof json.name === "string" ? json.name : "", lat: lat, lon: lon };
-        } catch (e) { return null; }
+    function parseLocation(raw) { return Location.parseWeatherLocation(raw); }
+    property FileView weatherFile: FileView {
+        path: root.weatherPath
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: { root.weatherValues = Toml.parse(text()); root.weatherRead = true; }
+        onLoadFailed: { root.weatherValues = ({}); root.weatherRead = true; }
     }
-    Component.onCompleted: { if (!locationPath) locationRead = true; }
+    function writeWeather(source, apiKey, url) {
+        if (!weatherPath) return;
+        var text = Location.weatherToml(source, apiKey, url);
+        var slash = weatherPath.lastIndexOf("/");
+        var dir = slash >= 0 ? weatherPath.slice(0, slash) : ".";
+        writer.command = ["sh", "-c",
+            "mkdir -p -- \"$1\" && printf '%s\\n' \"$3\" > \"$2\" && mv -f -- \"$2\" \"$4\"",
+            "omastorm-weather", dir, weatherPath + ".tmp", text, weatherPath];
+        writer.running = true;
+    }
+    property Process writer: Process { command: ["true"] }
+    Component.onCompleted: {
+        if (!locationPath) locationRead = true;
+        if (!weatherPath) weatherRead = true;
+    }
 }
