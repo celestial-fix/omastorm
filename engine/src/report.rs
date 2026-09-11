@@ -678,6 +678,10 @@ mod tests {
             },
             palette: vec!["#34465f".into()],
             bounds: vec![-32, 96],
+            kind: String::new(),
+            altitude_hpa: 0,
+            altitude_name: String::new(),
+            layer_source: String::new(),
         }
     }
 
