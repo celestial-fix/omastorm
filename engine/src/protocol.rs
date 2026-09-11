@@ -148,7 +148,8 @@ pub struct State {
     pub frame: Frame,
     /// The tile sources (`docs/protocol.md`, `tile_ready`).
     pub basemap: Basemap,
-    /// Aviation briefing for the last settled view centre (`docs/protocol.md`).
+    /// Aviation briefing for the last settled view centre or a pinned ICAO
+    /// (`docs/protocol.md`).
     pub aviation: Aviation,
     /// Products and altitudes the engine can draw (`docs/protocol.md`).
     pub layers: Layers,
@@ -230,6 +231,18 @@ pub struct Aviation {
     pub metar: Option<Bulletin>,
     pub taf: Option<Bulletin>,
     pub hazards: Vec<Hazard>,
+    /// Nearby ICAO aerodromes the map can mark. Empty (and omitted) when
+    /// aviation is off or nothing is in reach.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stations: Vec<AviationStation>,
+    /// Pinned four-letter ICAO from `set_aviation`. Empty (and omitted)
+    /// means the briefing follows the last `view_center`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub icao: String,
+    /// Whether the client asked for a briefing (`set_aviation` `enabled`).
+    /// Omitted when false (the default): no fetch, status stays `idle`.
+    #[serde(skip_serializing_if = "is_false")]
+    pub enabled: bool,
     /// Route GRAMET from `set_gramet` (origin, destination, cruise TAS).
     pub gramet: Gramet,
 }
@@ -271,7 +284,7 @@ pub struct Bulletin {
 #[derive(Serialize, PartialEq, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Hazard {
-    /// `sigmet`, `airmet`, `gamet`, or `gramet`.
+    /// `sigmet`, `airmet`, `gamet`, `gramet`, or `notam`.
     pub kind: String,
     pub hazard: String,
     pub raw: String,
@@ -454,6 +467,10 @@ pub struct Frame {
 
 fn is_zero_u32(value: &u32) -> bool {
     *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// The products, altitudes, and sources `set_product` / `set_source` accept.
@@ -657,6 +674,13 @@ pub enum Command {
         cruise_kt: u32,
         #[serde(default)]
         flight_level: u32,
+    },
+    /// Turn aviation briefing on or off. Optional `icao` pins METAR/TAF
+    /// to that station; empty follows the last `view_center`.
+    SetAviation {
+        enabled: bool,
+        #[serde(default)]
+        icao: String,
     },
     /// Jump the CDO / Meteostat cursor to an ISO date or hour.
     SeekHistory {

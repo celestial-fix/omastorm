@@ -123,10 +123,17 @@ FocusScope {
                 weakFloor: card.session.weakFloor
                 labelSize: 10
                 radarOpacity: card.condition === "unavailable" ? .6 : 1
-                    hazards: card.state && card.state.aviation ? card.state.aviation.hazards : []
-                    route: card.state && card.state.aviation && card.state.aviation.gramet
-                           && card.state.aviation.gramet.coords ? card.state.aviation.gramet.coords : []
-                    onTilesNeeded: (z, x0, y0, x1, y1) => connection.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
+                hazards: card.session.aviationWanted && card.state && card.state.aviation ? card.state.aviation.hazards : []
+                route: card.session.aviationWanted && card.state && card.state.aviation && card.state.aviation.gramet
+                       && card.state.aviation.gramet.coords ? card.state.aviation.gramet.coords : []
+                airports: card.session.aviationWanted && card.state && card.state.aviation && card.state.aviation.stations
+                       ? card.state.aviation.stations : []
+                aviationIcao: card.session.aviationIcao
+                onIcaoPicked: (icao) => {
+                    if (card.session.aviationIcao === icao) card.session.setAviation(true, "");
+                    else card.session.setAviation(true, icao);
+                }
+                onTilesNeeded: (z, x0, y0, x1, y1) => connection.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
                 function applyView() {
                     if (!card.session.hasView) return;
                     holdSpan = true;
@@ -194,7 +201,7 @@ FocusScope {
         }
         Label {
             Layout.fillWidth: true
-            visible: !!card.state && !!card.state.aviation && card.state.aviation.status !== "idle"
+            visible: card.session.aviationWanted && !!card.state && !!card.state.aviation && card.state.aviation.status !== "idle"
                 && card.state.aviation.status !== "unavailable"
             wrapMode: Text.Wrap
             opacity: .7

@@ -1,8 +1,11 @@
-//! Aviation briefing for the view centre: METAR, TAF, and hazard bulletins
-//! from NOAA's Aviation Weather Center. Live mode only; archived daemons
-//! and ordinary checks never fetch. `OMASTORM_AVIATION_URL` overrides the
-//! API root for development and tests.
+//! Aviation briefing for the view centre: METAR, TAF, and hazard bulletins.
+//! Chilean ICAO (`SC*`) and a view over Chile use DGAC IFIS
+//! (`aipchile.dgac.gob.cl`) as the only bulletin source; everywhere else
+//! uses NOAA's Aviation Weather Center. Live mode only; archived daemons
+//! and ordinary checks never fetch. `OMASTORM_AVIATION_URL` and
+//! `OMASTORM_CHILE_URL` override the roots for development and tests.
 
+use crate::chile;
 use crate::protocol::{Aviation, AviationStatus, Bulletin, Hazard, Point};
 use serde::Deserialize;
 use std::{
@@ -25,9 +28,11 @@ const HAZARD_HALF_DEG: f64 = 5.0;
 const STILL_KM: f64 = 25.0;
 const FRESH: Duration = Duration::from_secs(5 * 60);
 const ATTRIBUTION: &str = "NOAA Aviation Weather Center";
+const MAX_STATIONS: usize = 32;
 
 pub struct Client {
     base: String,
+    chile_base: String,
     http: reqwest::Client,
     last: std::sync::Mutex<Option<Last>>,
 }
@@ -38,9 +43,24 @@ struct Last {
     at: Instant,
 }
 
+/// A four-letter ICAO id, or `None` when the field is empty (follow the view).
+pub fn parse_icao(text: &str) -> Result<Option<String>, String> {
+    let trimmed = text.trim().to_ascii_uppercase();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.len() == 4 && trimmed.chars().all(|c| c.is_ascii_alphabetic()) {
+        Ok(Some(trimmed))
+    } else {
+        Err("Aviation station must be a four-letter ICAO id.".into())
+    }
+}
+
 impl Client {
     pub fn open() -> io::Result<Client> {
         let base = env::var("OMASTORM_AVIATION_URL").unwrap_or_else(|_| DEFAULT_URL.into());
+        let chile_base =
+            env::var("OMASTORM_CHILE_URL").unwrap_or_else(|_| chile::DEFAULT_URL.into());
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(FETCH_TIMEOUT)
@@ -48,6 +68,7 @@ impl Client {
             .map_err(io::Error::other)?;
         Ok(Client {
             base: base.trim_end_matches('/').to_owned(),
+            chile_base: chile_base.trim_end_matches('/').to_owned(),
             http,
             last: std::sync::Mutex::new(None),
         })
@@ -61,6 +82,9 @@ impl Client {
             metar: None,
             taf: None,
             hazards: Vec::new(),
+            stations: Vec::new(),
+            icao: String::new(),
+            enabled: false,
             gramet: crate::gramet::idle(),
         }
     }
@@ -73,8 +97,22 @@ impl Client {
             metar: None,
             taf: None,
             hazards: Vec::new(),
+            stations: Vec::new(),
+            icao: String::new(),
+            enabled: true,
             gramet: crate::gramet::idle(),
         }
+    }
+
+    pub fn loading_station(icao: &str) -> Aviation {
+        let mut briefing = Self::loading();
+        briefing.icao = icao.to_owned();
+        briefing
+    }
+
+    /// Drop the freshness stamp so the next wake always fetches.
+    pub fn forget(&self) {
+        *self.last.lock().unwrap() = None;
     }
 
     /// Whether a new centre is worth a fetch.
@@ -107,6 +145,47 @@ impl Client {
                     metar: None,
                     taf: None,
                     hazards: Vec::new(),
+                    stations: Vec::new(),
+                    icao: String::new(),
+                    enabled: true,
+                    gramet: crate::gramet::idle(),
+                }
+            }
+        }
+    }
+
+    pub async fn fetch_station(&self, icao: &str) -> Aviation {
+        match self.load_station(icao).await {
+            Ok(briefing) => {
+                let (lat, lon) = briefing
+                    .station
+                    .as_ref()
+                    .map(|s| (s.lat, s.lon))
+                    .unwrap_or((0.0, 0.0));
+                *self.last.lock().unwrap() = Some(Last {
+                    lat,
+                    lon,
+                    at: Instant::now(),
+                });
+                briefing
+            }
+            Err(e) => {
+                eprintln!("Aviation station {icao}: {e}");
+                let chile = chile::is_chile_icao(icao);
+                Aviation {
+                    status: AviationStatus::Offline,
+                    attribution: if chile {
+                        chile::ATTRIBUTION.into()
+                    } else {
+                        ATTRIBUTION.into()
+                    },
+                    station: None,
+                    metar: None,
+                    taf: None,
+                    hazards: Vec::new(),
+                    stations: Vec::new(),
+                    icao: icao.to_owned(),
+                    enabled: true,
                     gramet: crate::gramet::idle(),
                 }
             }
@@ -114,14 +193,21 @@ impl Client {
     }
 
     async fn load(&self, lat: f64, lon: f64) -> io::Result<Aviation> {
+        if chile::in_chile(lat, lon) {
+            return self.load_chile_view(lat, lon).await;
+        }
         let metar_bbox = bbox(lat, lon, METAR_HALF_DEG);
-        let hazard_bbox = bbox(lat, lon, HAZARD_HALF_DEG);
         let metars = self
             .get_json(&format!("/metar?bbox={metar_bbox}&format=json"))
             .await?;
+        let records = as_records::<MetarRecord>(&metars);
+        let mut stations = stations_from_metars(&records, lat, lon);
         let mut station = None;
         let mut metar = None;
         if let Some(nearest) = nearest_metar(&metars, lat, lon) {
+            if chile::is_chile_icao(&nearest.icao_id) {
+                return self.load_chile_station(&nearest.icao_id).await;
+            }
             station = Some(crate::protocol::AviationStation {
                 id: nearest.icao_id.clone(),
                 lat: nearest.lat,
@@ -139,6 +225,124 @@ impl Client {
             }
             None => None,
         };
+        let hazards = self.hazards_near(lat, lon).await;
+        let status = if metar.is_none() && hazards.is_empty() {
+            AviationStatus::Unavailable
+        } else {
+            AviationStatus::Ok
+        };
+        if let Some(s) = station.as_ref()
+            && !stations.iter().any(|have| have.id == s.id)
+        {
+            stations.insert(0, s.clone());
+            stations.truncate(MAX_STATIONS);
+        }
+        Ok(Aviation {
+            status,
+            attribution: ATTRIBUTION.into(),
+            station,
+            metar,
+            taf,
+            hazards,
+            stations,
+            icao: String::new(),
+            enabled: true,
+            gramet: crate::gramet::idle(),
+        })
+    }
+
+    async fn load_chile_view(&self, lat: f64, lon: f64) -> io::Result<Aviation> {
+        match chile::fetch_view(&self.http, &self.chile_base, lat, lon).await {
+            Ok(report) => Ok(from_chile(report, String::new())),
+            Err(e) => {
+                eprintln!("Chile IFIS view: {e}");
+                Ok(chile_offline(String::new()))
+            }
+        }
+    }
+
+    async fn load_chile_station(&self, icao: &str) -> io::Result<Aviation> {
+        match chile::fetch_station(&self.http, &self.chile_base, icao).await {
+            Ok(report) => Ok(from_chile(report, icao.to_owned())),
+            Err(e) => {
+                eprintln!("Chile IFIS {icao}: {e}");
+                Ok(chile_offline(icao.to_owned()))
+            }
+        }
+    }
+
+    async fn load_station(&self, icao: &str) -> io::Result<Aviation> {
+        if chile::is_chile_icao(icao) {
+            return self.load_chile_station(icao).await;
+        }
+        let metars = self
+            .get_json(&format!("/metar?ids={icao}&format=json"))
+            .await?;
+        let record = metar_by_id(&metars, icao);
+        let taf_body = self
+            .get_json(&format!("/taf?ids={icao}&format=json"))
+            .await?;
+        let taf = nearest_taf(&taf_body, icao).map(bulletin_from_taf);
+        let mut lat = record.as_ref().map(|m| m.lat).unwrap_or(0.0);
+        let mut lon = record.as_ref().map(|m| m.lon).unwrap_or(0.0);
+        if lat == 0.0
+            && lon == 0.0
+            && let Some((found_lat, found_lon)) = self.station_coords(icao).await
+        {
+            lat = found_lat;
+            lon = found_lon;
+        }
+        let station = Some(crate::protocol::AviationStation {
+            id: icao.to_owned(),
+            lat,
+            lon,
+            distance_km: 0.0,
+        });
+        let metar = record.as_ref().map(bulletin_from_metar);
+        let hazards = if lat != 0.0 || lon != 0.0 {
+            self.hazards_near(lat, lon).await
+        } else {
+            Vec::new()
+        };
+        let status = if metar.is_none() && taf.is_none() && hazards.is_empty() {
+            AviationStatus::Unavailable
+        } else {
+            AviationStatus::Ok
+        };
+        let stations = station.iter().cloned().collect();
+        Ok(Aviation {
+            status,
+            attribution: ATTRIBUTION.into(),
+            station,
+            metar,
+            taf,
+            hazards,
+            stations,
+            icao: icao.to_owned(),
+            enabled: true,
+            gramet: crate::gramet::idle(),
+        })
+    }
+
+    async fn station_coords(&self, icao: &str) -> Option<(f64, f64)> {
+        let value = self
+            .get_json(&format!("/stationinfo?ids={icao}&format=json"))
+            .await
+            .ok()?;
+        as_records::<StationInfo>(&value)
+            .into_iter()
+            .find(|s| s.icao_id.eq_ignore_ascii_case(icao))
+            .and_then(|s| {
+                if s.lat == 0.0 && s.lon == 0.0 {
+                    None
+                } else {
+                    Some((s.lat, s.lon))
+                }
+            })
+    }
+
+    async fn hazards_near(&self, lat: f64, lon: f64) -> Vec<Hazard> {
+        let hazard_bbox = bbox(lat, lon, HAZARD_HALF_DEG);
         let mut hazards = Vec::new();
         for (path, fallback_kind) in [
             (format!("/isigmet?bbox={hazard_bbox}&format=json"), "sigmet"),
@@ -155,20 +359,7 @@ impl Client {
             }
         }
         hazards.retain(|h| hazard_near(h, lat, lon));
-        let status = if metar.is_none() && hazards.is_empty() {
-            AviationStatus::Unavailable
-        } else {
-            AviationStatus::Ok
-        };
-        Ok(Aviation {
-            status,
-            attribution: ATTRIBUTION.into(),
-            station,
-            metar,
-            taf,
-            hazards,
-            gramet: crate::gramet::idle(),
-        })
+        hazards
     }
 
     async fn get_json(&self, path: &str) -> io::Result<serde_json::Value> {
@@ -189,6 +380,66 @@ impl Client {
         }
         serde_json::from_slice(&bytes).map_err(io::Error::other)
     }
+}
+
+fn from_chile(report: chile::Report, icao: String) -> Aviation {
+    let status = if report.metar.is_none() && report.taf.is_none() && report.hazards.is_empty() {
+        AviationStatus::Unavailable
+    } else {
+        AviationStatus::Ok
+    };
+    Aviation {
+        status,
+        attribution: chile::ATTRIBUTION.into(),
+        station: report.station,
+        metar: report.metar,
+        taf: report.taf,
+        hazards: report.hazards,
+        stations: report.stations,
+        icao,
+        enabled: true,
+        gramet: crate::gramet::idle(),
+    }
+}
+
+fn chile_offline(icao: String) -> Aviation {
+    Aviation {
+        status: AviationStatus::Offline,
+        attribution: chile::ATTRIBUTION.into(),
+        station: None,
+        metar: None,
+        taf: None,
+        hazards: Vec::new(),
+        stations: Vec::new(),
+        icao,
+        enabled: true,
+        gramet: crate::gramet::idle(),
+    }
+}
+
+fn stations_from_metars(
+    records: &[MetarRecord],
+    lat: f64,
+    lon: f64,
+) -> Vec<crate::protocol::AviationStation> {
+    let mut stations: Vec<crate::protocol::AviationStation> = records
+        .iter()
+        .filter(|m| !m.icao_id.is_empty() && (m.lat != 0.0 || m.lon != 0.0))
+        .map(|m| crate::protocol::AviationStation {
+            id: m.icao_id.clone(),
+            lat: m.lat,
+            lon: m.lon,
+            distance_km: great_circle_km(lat, lon, m.lat, m.lon),
+        })
+        .collect();
+    stations.sort_by(|a, b| {
+        a.id.cmp(&b.id)
+            .then(a.distance_km.total_cmp(&b.distance_km))
+    });
+    stations.dedup_by(|a, b| a.id == b.id);
+    stations.sort_by(|a, b| a.distance_km.total_cmp(&b.distance_km));
+    stations.truncate(MAX_STATIONS);
+    stations
 }
 
 fn bbox(lat: f64, lon: f64, half: f64) -> String {
@@ -240,6 +491,17 @@ struct TafRecord {
     valid_time_to: Option<i64>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StationInfo {
+    #[serde(default)]
+    icao_id: String,
+    #[serde(default)]
+    lat: f64,
+    #[serde(default)]
+    lon: f64,
+}
+
 fn as_records<T: for<'de> Deserialize<'de>>(value: &serde_json::Value) -> Vec<T> {
     match value {
         serde_json::Value::Array(items) => items
@@ -260,10 +522,16 @@ fn nearest_metar(value: &serde_json::Value, lat: f64, lon: f64) -> Option<MetarR
         })
 }
 
+fn metar_by_id(value: &serde_json::Value, icao: &str) -> Option<MetarRecord> {
+    as_records::<MetarRecord>(value)
+        .into_iter()
+        .find(|m| m.icao_id.eq_ignore_ascii_case(icao) && !m.raw_ob.is_empty())
+}
+
 fn nearest_taf(value: &serde_json::Value, id: &str) -> Option<TafRecord> {
     as_records::<TafRecord>(value)
         .into_iter()
-        .find(|t| t.icao_id == id && !t.raw_taf.is_empty())
+        .find(|t| t.icao_id.eq_ignore_ascii_case(id) && !t.raw_taf.is_empty())
 }
 
 fn bulletin_from_metar(record: &MetarRecord) -> Bulletin {
@@ -506,5 +774,31 @@ mod tests {
         let polar = bbox(89.0, 10.0, 5.0);
         assert!(polar.starts_with("84.0000"));
         assert!(polar.contains(",90.0000,"));
+    }
+
+    #[test]
+    fn icao_ids_are_four_letters() {
+        assert_eq!(parse_icao("scel").unwrap().as_deref(), Some("SCEL"));
+        assert_eq!(parse_icao("  ").unwrap(), None);
+        assert!(parse_icao("SC").is_err());
+        assert!(parse_icao("SCEL1").is_err());
+    }
+
+    #[test]
+    fn scel_metar_is_found_by_id() {
+        let body = serde_json::json!([
+            {
+                "icaoId": "SCEL",
+                "lat": -33.393,
+                "lon": -70.786,
+                "rawOb": "SCEL 101900Z 18008KT 9999 FEW030 18/08 Q1016"
+            },
+            {
+                "icaoId": "SCVM",
+                "rawOb": "SCVM 101900Z 20010KT CAVOK 16/10 Q1015"
+            }
+        ]);
+        assert_eq!(metar_by_id(&body, "scel").unwrap().icao_id, "SCEL");
+        assert!(metar_by_id(&body, "SCFA").is_none());
     }
 }

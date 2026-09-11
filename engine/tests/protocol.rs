@@ -140,6 +140,7 @@ fn fixture_transport_and_shared_commands() {
     assert_eq!(initial["playing"], false);
     assert!(initial["connection"]["ageSeconds"].as_u64().unwrap() > 400_000_000);
     assert_eq!(initial["aviation"]["status"], "idle");
+    assert_eq!(initial["aviation"]["enabled"], serde_json::Value::Null);
     assert!(
         initial["aviation"]["hazards"]
             .as_array()
@@ -330,6 +331,22 @@ fn fixture_transport_and_shared_commands() {
     assert_eq!(e["type"], "error");
     assert_eq!(e["command"], "set_gramet");
     assert!(e["message"].as_str().unwrap().contains("live"));
+    send(
+        &mut first,
+        json!({"type": "set_aviation", "enabled": true, "icao": "SCEL"}),
+    );
+    let e = read(&mut first);
+    assert_eq!(e["type"], "error");
+    assert_eq!(e["command"], "set_aviation");
+    assert!(e["message"].as_str().unwrap().contains("live"));
+    send(
+        &mut first,
+        json!({"type": "set_aviation", "enabled": true, "icao": "SC"}),
+    );
+    let e = read(&mut first);
+    assert_eq!(e["type"], "error");
+    assert_eq!(e["command"], "set_aviation");
+    assert!(e["message"].as_str().unwrap().contains("ICAO"));
     send(
         &mut first,
         json!({"type": "seek_history", "time": "2020-01-15"}),

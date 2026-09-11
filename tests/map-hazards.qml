@@ -44,6 +44,8 @@ ShellRoot {
                     map.lookAt(-33.45, -70.67);
                     map.span = 400;
                     map.hazards = [airmet, santiago];
+                    map.airports = [{id: "SCVM", lat: -32.95, lon: -71.48}];
+                    map.aviationIcao = "";
                 }
                 if (stage === 1) {
                     var hit = map.hazardAt(map.width / 2, map.height / 2);
@@ -54,9 +56,17 @@ ShellRoot {
                     check(!miss, "Corner of the view was inside a hazard");
                     map.hoverAt(map.width / 2, map.height / 2);
                     check(map.hoverHazard && map.hoverHazard.kind === "sigmet", "hoverAt did not keep the SIGMET");
+                    check(!map.hoverAirport, "View centre should not sit on the ICAO marker");
+                    check(map.hoverTip.visible, "Themed tooltip stayed hidden over a SIGMET");
                 }
                 if (stage === 2) {
-                    check(map.hoverTip.visible, "Themed tooltip stayed hidden over a SIGMET");
+                    var marker = map.airportAt(map.sx(map.mercatorX(-32.95)), map.sy(map.mercatorY(-71.48)));
+                    check(marker && marker.id === "SCVM", "Viña ICAO marker was not hit: " + (marker ? marker.id : "null"));
+                    map.hoverAt(map.sx(map.mercatorX(-32.95)), map.sy(map.mercatorY(-71.48)));
+                    check(map.hoverAirport && map.hoverAirport.id === "SCVM", "hovering the ICAO marker did not pick SCVM");
+                    check(!map.hoverHazard, "ICAO hover should win over a polygon under the marker");
+                    check(map.airportTitle(map.hoverAirport) === "SCVM", "Airport tooltip title drifted: " + map.airportTitle(map.hoverAirport));
+                    check(map.hoverTip.visible, "Themed tooltip stayed hidden over an ICAO marker");
                     var border = String(map.hoverTip.border.color);
                     check(border.indexOf("eeeeee") >= 0 || border.indexOf("EEEEEE") >= 0 || border === String(map.theme.foreground),
                           "Tooltip border is not theme foreground: " + border);

@@ -27,11 +27,14 @@ client: it displays those textures in the bar popover and full window.
 - **Every site.** Pan the map and it follows the nearest station in range, or
   search by id, city, or country. Places worldwide, including Santiago,
   search; outside the NEXRAD footprint the map stands without a distant sweep.
-- **Aviation briefing.** Live METAR, TAF, SIGMET, AIRMET, and GAMET for
-  the view, from NOAA's Aviation Weather Center, plus a route GRAMET from
-  origin and destination ICAO and cruise TAS. Hazard polygons and the
-  route track draw on the map; hover a SIGMET (or AIRMET / GAMET) for the
-  issued bulletin.
+- **Aviation briefing.** Opt-in (`a`, or NORMAL | AVIATION). Live METAR,
+  TAF, SIGMET, AIRMET, GAMET, and Chilean NOTAM for the view or a pinned
+  ICAO. Chile uses DGAC IFIS (`aipchile.dgac.gob.cl`); everywhere else
+  uses NOAA's Aviation Weather Center. Type an ICAO (`i`) or click the
+  marker on the map. A route GRAMET comes from origin and destination
+  ICAO and cruise TAS (`Shift+A`). Hazard polygons and ICAO markers
+  draw on the map; hover a SIGMET (or AIRMET / GAMET / NOTAM) for the
+  issued bulletin, or an ICAO marker to pin it.
 - **Field layers.** Live wind, pressure, water, temperature, and
   precipitation. Reports (NEXRAD, Open-Meteo now, NOAA CDO, Meteostat)
   stay separate from forecasts (GFS, ECMWF IFS, optional local WRF).
@@ -135,6 +138,8 @@ cannot be reached, with cached frames kept.
 | `Shift+O` `Shift+G` `Shift+E` `Shift+F` | Now, GFS, ECMWF, WRF sources |
 | `Shift+C` `Shift+M` | NOAA CDO and Meteostat archives |
 | `Shift+A` | Route GRAMET (origin, destination, TAS) |
+| `a` | Normal / aviation mode |
+| `i` | Aviation ICAO (type an id, or click a marker) |
 | `Shift+X` | Run local WRF (after the time estimate) |
 | `Shift+[` `Shift+]` | Layer altitude |
 | `Shift+R` | Radar (reflectivity) |
@@ -152,9 +157,8 @@ the measured sweep, not a forecast.
 
 ## Configuration
 
-`~/.config/omastorm/config.toml` holds deliberate preferences. The app saves
-last map center, zoom, and UI radar lock separately in
-`$XDG_STATE_HOME/omastorm/state.json` (default
+`~/.config/omastorm/config.toml` holds deliberate preferences. The app saves last map center, zoom, UI radar lock, and aviation mode
+separately in `$XDG_STATE_HOME/omastorm/state.json` (default
 `~/.local/state/omastorm/state.json`). Navigation never rewrites your config.
 `Shift+H`, or LOCATION, opens the location picker; it writes state, not config.
 
@@ -224,7 +228,9 @@ This is a beta. Bugs, rough edges, and ideas go to
 
 Radar: NOAA NEXRAD Level II via the NOAA Open Data program on AWS. Aviation
 briefing: NOAA Aviation Weather Center (METAR, TAF, SIGMET, AIRMET, GAMET,
-issued GRAMET) and a route GRAMET sampled from Open-Meteo. Historical
+issued GRAMET) outside Chile; DGAC Chile IFIS (`aipchile.dgac.gob.cl`) for
+Chilean METAR, TAF, NOTAM, and SIGMET; and a route GRAMET sampled from
+Open-Meteo. Historical
 reports: NOAA NCEI Climate Data Online and [Meteostat](https://meteostat.net).
 Basemap: ©
 OpenStreetMap contributors, [ODbL](https://opendatacommons.org/licenses/odbl/1-0/),

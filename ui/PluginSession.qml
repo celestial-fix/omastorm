@@ -33,7 +33,10 @@ QtObject {
     property string lockId: ""
     property bool lockWanted: false
     property string lockSource: ""
+    property bool aviationWanted: false
+    property string aviationIcao: ""
     property string lastConfigLock: ""
+    property var lastConfigAviation: undefined
     property bool pendingLocationPicker: false
     property var appliedExplicit: null
     signal viewChanged()
@@ -65,6 +68,7 @@ QtObject {
                 placeName = "";
             }
             applyLaunchLock(rememberedView);
+            applyLaunchAviation(rememberedView);
         }
         if (explicit) {
             var same = appliedExplicit && appliedExplicit.lat === explicit.lat && appliedExplicit.lon === explicit.lon;
@@ -80,6 +84,7 @@ QtObject {
             appliedExplicit = null;
         }
         applyConfigLockChange();
+        applyConfigAviationChange();
         viewChanged();
     }
 
@@ -116,9 +121,30 @@ QtObject {
         }
     }
 
+    function applyLaunchAviation(rememberedView) {
+        var cfg = Location.configAviation(config.values);
+        lastConfigAviation = cfg;
+        if (cfg === true) aviationWanted = true;
+        else if (cfg === false) aviationWanted = false;
+        else aviationWanted = !!(rememberedView && rememberedView.aviation);
+        aviationIcao = rememberedView && rememberedView.icao ? rememberedView.icao : "";
+        if (!aviationWanted) aviationIcao = "";
+    }
+
+    function applyConfigAviationChange() {
+        var cfg = Location.configAviation(config.values);
+        if (cfg === lastConfigAviation) return;
+        lastConfigAviation = cfg;
+        if (cfg === true) aviationWanted = true;
+        else if (cfg === false) {
+            aviationWanted = false;
+            aviationIcao = "";
+        }
+    }
+
     function persist() {
         if (!hasView) return;
-        remembered.snapshot(centerLat, centerLon, span, lockWanted ? lockId : "", placeName);
+        remembered.snapshot(centerLat, centerLon, span, lockWanted ? lockId : "", placeName, aviationWanted, aviationWanted ? aviationIcao : "");
     }
 
     function rememberView(lat, lon, spanKm) {
@@ -239,11 +265,28 @@ QtObject {
         }
     }
 
+    function setAviation(on, icao) {
+        aviationWanted = !!on;
+        if (!aviationWanted) aviationIcao = "";
+        else if (icao !== undefined) aviationIcao = String(icao || "").trim().toUpperCase();
+        persist();
+        applyAviation();
+    }
+
+    function applyAviation() {
+        if (!engine.state || !ready) return;
+        if (engine.state.source !== "live") return;
+        var cmd = { type: "set_aviation", enabled: aviationWanted };
+        if (aviationWanted && aviationIcao) cmd.icao = aviationIcao;
+        engine.send(cmd);
+    }
+
     function initialize() {
         if (initialized || !engine.state || !ready) return;
         initialized = true;
         resolve();
         applyRadar();
+        applyAviation();
         applyWeather();
         persist();
     }
@@ -281,7 +324,7 @@ QtObject {
     property Connections configEvents: Connections {
         target: session.config
         function onReadyChanged() { session.resolve(); session.initialize(); }
-        function onValuesChanged() { if (session.initialized) { session.resolve(); session.applyRadar(); session.applyWeather(); } }
+        function onValuesChanged() { if (session.initialized) { session.resolve(); session.applyRadar(); session.applyAviation(); session.applyWeather(); } }
         function onWeatherValuesChanged() { if (session.initialized) session.applyWeather(); }
         function onLocationChanged() { if (!session.hasView) session.resolve(); if (session.initialized) { session.applyRadar(); session.applyWeather(); } }
         function onTreatmentChanged() { session.applyTreatment(); }

@@ -272,6 +272,13 @@ function configLock(values) {
     return values.locked_radar.trim().toUpperCase();
 }
 
+function configAviation(values) {
+    if (!values || values.aviation === undefined) return undefined;
+    if (values.aviation === true) return true;
+    if (values.aviation === false) return false;
+    return undefined;
+}
+
 function configErrors(values) {
     var errors = [];
     if (!values) return errors;
@@ -286,6 +293,8 @@ function configErrors(values) {
         else if (!values.locked_radar.trim())
             errors.push("locked_radar must be a quoted station id");
     }
+    if (values.aviation !== undefined && typeof values.aviation !== "boolean")
+        errors.push("aviation must be true or false");
     if (values.home_site !== undefined)
         errors.push("home_site is unused; location is a place (center_lat/center_lon or the location picker)");
     if (values.follow !== undefined)
@@ -295,28 +304,34 @@ function configErrors(values) {
 
 // Remembered view from state.json. Invalid fields are dropped, not fatal.
 function parseState(raw) {
-    var empty = { lat: undefined, lon: undefined, span: undefined, lock: "", name: "" };
+    var empty = { lat: undefined, lon: undefined, span: undefined, lock: "", name: "", aviation: false, icao: "" };
     if (raw === undefined || raw === null || raw === "") return empty;
     try {
         var json = typeof raw === "string" ? JSON.parse(raw) : raw;
         if (!json || typeof json !== "object") return empty;
         var lat = json.lat, lon = json.lon, span = json.span;
+        var icao = typeof json.icao === "string" ? json.icao.trim().toUpperCase() : "";
+        if (icao && !/^[A-Z]{4}$/.test(icao)) icao = "";
         return {
             lat: validLat(lat) ? lat : undefined,
             lon: validLon(lon) ? lon : undefined,
             span: typeof span === "number" && isFinite(span) && span > 0 ? span : undefined,
             lock: typeof json.lock === "string" ? json.lock.trim().toUpperCase() : "",
-            name: typeof json.name === "string" ? json.name : ""
+            name: typeof json.name === "string" ? json.name : "",
+            aviation: json.aviation === true,
+            icao: icao
         };
     } catch (e) { return empty; }
 }
 
-function stateObject(viewLat, viewLon, span, lock, name) {
+function stateObject(viewLat, viewLon, span, lock, name, aviation, icao) {
     var o = {};
     if (validPair(viewLat, viewLon)) { o.lat = viewLat; o.lon = viewLon; }
     if (typeof span === "number" && isFinite(span) && span > 0) o.span = span;
     if (lock) o.lock = lock;
     if (name) o.name = name;
+    if (aviation) o.aviation = true;
+    if (aviation && icao) o.icao = String(icao).trim().toUpperCase();
     return o;
 }
 

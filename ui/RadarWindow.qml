@@ -91,8 +91,10 @@ Item {
     readonly property var aviation: state && state.aviation ? state.aviation : null
     readonly property var gramet: aviation && aviation.gramet ? aviation.gramet : null
     readonly property var history: state && state.history ? state.history : null
+    readonly property bool aviationMode: store.aviationWanted
     readonly property string aviationLine: {
-        if (!aviation || aviation.status === "idle") return "";
+        if (!aviationMode) return "";
+        if (!aviation || aviation.status === "idle") return "AVIATION · MAP";
         if (aviation.status === "loading") return "AVIATION · LOADING";
         if (aviation.status === "offline") return "AVIATION · OFFLINE";
         if (aviation.status === "unavailable") return "AVIATION · NO BULLETIN";
@@ -101,9 +103,11 @@ Item {
         var raw = aviation.metar ? aviation.metar.raw : "";
         var n = aviation.hazards ? aviation.hazards.length : 0;
         var hazards = n ? " · " + n + " HAZARD" + (n === 1 ? "" : "S") : "";
-        return (id ? id + " · " : "") + cat + (raw || "BRIEFING") + hazards;
+        var pin = store.aviationIcao ? " · PIN" : "";
+        return (id ? id + " · " : "") + cat + (raw || "BRIEFING") + hazards + pin;
     }
     readonly property string grametLine: {
+        if (!aviationMode) return "";
         if (!gramet || gramet.status === "idle") return "";
         if (gramet.status === "loading") return "GRAMET · LOADING";
         if (gramet.status === "offline") return "GRAMET · OFFLINE";
@@ -248,7 +252,7 @@ Item {
         if (!session && KeyMap.envFloor(Quickshell.env("OMASTORM_WEAK")) === undefined) weakFloor = floor;
     }
     Component.onCompleted: applySettings()
-    readonly property bool overlayOpen: picker.open || locationPicker.open || grametPicker.open || weatherPicker.open || sheet.open || reportSheet.open
+    readonly property bool overlayOpen: picker.open || locationPicker.open || grametPicker.open || icaoPicker.open || weatherPicker.open || sheet.open || reportSheet.open
     function run(action) {
         switch (action) {
         case "search": treatmentMenu.close(); picker.show(""); break;
@@ -282,7 +286,20 @@ Item {
         case "source_cdo": setSource("cdo"); break;
         case "source_meteostat": setSource("meteostat"); break;
         case "run_wrf": runWrf(); break;
-        case "gramet": treatmentMenu.close(); grametPicker.show(""); break;
+        case "aviation":
+            treatmentMenu.close();
+            store.setAviation(!store.aviationWanted);
+            break;
+        case "icao":
+            treatmentMenu.close();
+            if (!store.aviationWanted) store.setAviation(true);
+            icaoPicker.show(store.aviationIcao || (app.aviation && app.aviation.station ? app.aviation.station.id : ""));
+            break;
+        case "gramet":
+            treatmentMenu.close();
+            if (!store.aviationWanted) store.setAviation(true);
+            grametPicker.show("");
+            break;
         case "altitude_down": stepAltitude(-1); break;
         case "altitude_up": stepAltitude(1); break;
         case "weak": weakFloor = weakFloor === null ? configuredFloor : null; break;
@@ -309,7 +326,8 @@ Item {
             return JSON.stringify({sheet: sheet.open, report: reportSheet.open, menu: treatmentMenu.opened, treatment: app.treatment, weakFloor: app.weakFloor === null ? "off" : app.weakFloor, error: app.configError,
                                    span: Math.round(map.span * 10) / 10, lat: Math.round(map.centerLat * 1000) / 1000, lon: Math.round(map.centerLon * 1000) / 1000,
                                    locationSource: app.store.locationSource, needsLocation: app.store.needsLocation,
-                                   site: app.siteId, locked: app.locked, lockSource: app.store.lockSource, outsideCoverage: app.outsideCoverage});
+                                   site: app.siteId, locked: app.locked, lockSource: app.store.lockSource, outsideCoverage: app.outsideCoverage,
+                                   aviation: app.store.aviationWanted, icao: app.store.aviationIcao});
         }
     }
     // Site navigation (DESIGN.md, location): the lock pins the radar against
@@ -380,6 +398,26 @@ Item {
         store.chooseRadar(s.id, Number(s.lat), Number(s.lon), s.name || s.id);
         applyView();
     }
+    property string pendingLookIcao: ""
+    function pinIcao(icao) {
+        store.setAviation(true, icao || "");
+        pendingLookIcao = icao || "";
+        if (!pendingLookIcao) return;
+        lookIcao(pendingLookIcao);
+    }
+    function lookIcao(icao) {
+        if (!icao) { pendingLookIcao = ""; return; }
+        var list = app.aviation && app.aviation.stations ? app.aviation.stations : [];
+        var s = null;
+        for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === icao) { s = list[i]; break; }
+        if (!s && app.aviation && app.aviation.station && app.aviation.station.id === icao)
+            s = app.aviation.station;
+        if (s && (Math.abs(Number(s.lat)) > 0.01 || Math.abs(Number(s.lon)) > 0.01)) {
+            map.lookAt(Number(s.lat), Number(s.lon));
+            pendingLookIcao = "";
+        }
+    }
+    onAviationChanged: if (pendingLookIcao) lookIcao(pendingLookIcao)
     // Drives the picker from outside for checks and captures:
     // quickshell ipc --pid <pid> call picker open tul
     IpcHandler {
@@ -639,9 +677,10 @@ Item {
                 opacity: .75
                 font.pixelSize: 11
                 Layout.fillWidth: true
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run("icao") }
             }
             LabelText {
-                visible: !win.compact && !!app.aviation && !!app.aviation.taf && !!app.aviation.taf.raw
+                visible: app.aviationMode && !win.compact && !!app.aviation && !!app.aviation.taf && !!app.aviation.taf.raw
                 text: "TAF · " + app.aviation.taf.raw
                 wrapMode: Text.Wrap
                 opacity: .55
@@ -670,6 +709,8 @@ Item {
                 spacing: 8
                 Repeater {
                     model: [
+                        {id: "normal", label: "NORMAL", group: "mode", key: "aviationOff"},
+                        {id: "aviation", label: "AVIATION", group: "mode", key: "aviationOn"},
                         {id: "nexrad", label: "NEXRAD", group: "report", key: "layer_radar"},
                         {id: "now", label: "NOW", group: "report", key: "source_now"},
                         {id: "gfs", label: "GFS", group: "forecast", key: "source_gfs"},
@@ -680,12 +721,26 @@ Item {
                     ]
                     LabelText {
                         required property var modelData
+                        readonly property bool modeChip: modelData.group === "mode"
+                        readonly property bool selected: modeChip
+                            ? (modelData.id === "aviation" ? app.aviationMode : !app.aviationMode)
+                            : app.layerSource === modelData.id
                         text: modelData.label
                         font.pixelSize: 10
                         font.letterSpacing: 1
-                        color: app.layerSource === modelData.id ? app.theme.accent : app.theme.foreground
-                        opacity: app.layerSource === modelData.id ? 1 : .55
-                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run(modelData.key) }
+                        color: selected ? app.theme.accent : app.theme.foreground
+                        opacity: selected ? 1 : .55
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (modelData.id === "aviation") {
+                                    if (!app.store.aviationWanted) app.store.setAviation(true);
+                                } else if (modelData.id === "normal") {
+                                    if (app.store.aviationWanted) app.store.setAviation(false);
+                                } else app.run(modelData.key);
+                            }
+                        }
                     }
                 }
             }
@@ -773,8 +828,20 @@ Item {
                     Component.onCompleted: app.applyView()
                     // The map asks for tiles when its camera settles and the
                     // engine answers this window alone, tile by tile.
-                    hazards: app.aviation && app.aviation.hazards ? app.aviation.hazards : []
-                    route: app.gramet && app.gramet.coords ? app.gramet.coords : []
+                    hazards: app.aviationMode && app.aviation && app.aviation.hazards ? app.aviation.hazards : []
+                    route: app.aviationMode && app.gramet && app.gramet.coords ? app.gramet.coords : []
+                    airports: app.aviationMode && app.aviation && app.aviation.stations ? app.aviation.stations : []
+                    aviationIcao: app.store.aviationIcao
+                    onIcaoPicked: (icao, lat, lon) => {
+                        if (!app.aviationMode) app.store.setAviation(true);
+                        if (app.store.aviationIcao === icao) {
+                            app.pinIcao("");
+                            return;
+                        }
+                        app.store.setAviation(true, icao);
+                        app.pendingLookIcao = "";
+                        if (Math.abs(lat) > 0.01 || Math.abs(lon) > 0.01) map.lookAt(lat, lon);
+                    }
                     onTilesNeeded: (z, x0, y0, x1, y1) => engine.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
                 }
                 Connections { target: engine; function onTileReady(tile) { map.tileReady(tile); } }
@@ -819,7 +886,7 @@ Item {
                     anchors.left: parent.horizontalCenter; horizontalAlignment: Text.AlignRight
                     text: {
                         var mapCredit = map.osmOnScreen && app.state && app.state.basemap ? app.state.basemap.osm.attribution : "NATURAL EARTH · OFFLINE";
-                        var air = app.aviation && app.aviation.status !== "idle" ? " · " + app.aviation.attribution : "";
+                        var air = app.aviationMode && app.aviation && app.aviation.status !== "idle" ? " · " + app.aviation.attribution : "";
                         var hist = app.history && app.history.status !== "idle" ? " · " + app.history.attribution : "";
                         return mapCredit + air + hist;
                     }
@@ -1054,6 +1121,14 @@ Item {
             onSubmitted: (origin, destination, cruiseKt, flightLevel) => {
                 engine.send({type: "set_gramet", origin: origin, destination: destination, cruiseKt: cruiseKt, flightLevel: flightLevel});
             }
+          }
+          IcaoPicker {
+            id: icaoPicker
+            anchors.fill: parent
+            theme: app.theme
+            compact: win.compact
+            cardTop: layout.anchors.margins + mapFrame.y
+            onSubmitted: icao => app.pinIcao(icao)
           }
           LocationPicker {
             id: locationPicker

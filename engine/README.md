@@ -85,15 +85,20 @@ selects a station only when it lies within 460 km of the view centre.
 
 ## Aviation
 
-Live `view_center` fetches a briefing from NOAA's Aviation Weather Center:
-the nearest METAR in a 2° box, its TAF, and SIGMET / AIRMET / GAMET /
-issued GRAMET hazards in a 5° box. `set_gramet` builds a route GRAMET
-from origin and destination ICAO plus cruise TAS (optional flight
-level): AWC stationinfo plus Open-Meteo samples along the great-circle.
-Archived mode and ordinary checks never fetch. `OMASTORM_AVIATION_URL`
-overrides the API root. The UI shows issued bulletin text, hazard
-polygons, and the route polyline; hovering a polygon shows that bulletin
-in a themed tooltip. It does not decode GRIB or NetCDF.
+Aviation is off until `set_aviation` `enabled` true. Live briefing then
+follows the last `view_center`, or a pinned four-letter `icao`. Chilean
+ICAO (`SC*`) and a view over Chile fetch METAR, TAF, NOTAM, and SIGMET
+only from DGAC IFIS (`aipchile.dgac.gob.cl`); everywhere else uses NOAA's
+Aviation Weather Center (nearest METAR in a 2° box, its TAF, and SIGMET /
+AIRMET / GAMET / issued GRAMET in a 5° box). Nearby aerodromes are listed
+so the map can mark them. `set_gramet` builds a route GRAMET from origin
+and destination ICAO plus cruise TAS (optional flight level): AWC
+stationinfo plus Open-Meteo samples along the great-circle. Archived mode
+and ordinary checks never fetch. `OMASTORM_AVIATION_URL` overrides the
+AWC root; `OMASTORM_CHILE_URL` overrides IFIS. The UI shows issued
+bulletin text, hazard polygons, ICAO markers, and the route polyline;
+hovering a polygon shows that bulletin in a themed tooltip, and hovering
+an ICAO marker lets a click pin it. It does not decode GRIB or NetCDF.
 
 ## Field layers
 

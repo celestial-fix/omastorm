@@ -1,5 +1,6 @@
 mod aviation;
 mod catalog;
+mod chile;
 mod countries;
 mod fields;
 mod gramet;
@@ -568,6 +569,10 @@ struct Shared {
     aviation: Arc<aviation::Client>,
     /// Last settled view centre waiting for a briefing, live only.
     aviation_center: Option<(f64, f64)>,
+    /// Pinned ICAO from `set_aviation`; when set, pans do not replace METAR/TAF.
+    aviation_icao: Option<String>,
+    /// Live briefing is off until `set_aviation` `enabled` is true.
+    aviation_enabled: bool,
     aviation_wake: Arc<Notify>,
     field_center: Option<(f64, f64)>,
     field_source: String,
@@ -771,6 +776,12 @@ impl Shared {
             return false;
         }
         self.aviation_center = Some((lat, lon));
+        if !self.aviation_enabled {
+            return false;
+        }
+        if self.aviation_icao.is_some() {
+            return false;
+        }
         if !self.aviation.should_refresh(lat, lon) {
             return false;
         }
@@ -783,6 +794,57 @@ impl Shared {
         }
         self.aviation_wake.notify_one();
         false
+    }
+    fn set_aviation(&mut self, enabled: bool, icao: &str) -> (bool, Option<String>) {
+        let pin = match aviation::parse_icao(icao) {
+            Ok(pin) => pin,
+            Err(message) => return (false, Some(message)),
+        };
+        if self.state.source != Source::Live {
+            return (
+                false,
+                Some("Aviation briefing is available in live mode.".into()),
+            );
+        }
+        if !enabled {
+            self.aviation_enabled = false;
+            self.aviation_icao = None;
+            self.aviation.forget();
+            let gramet = self.state.aviation.gramet.clone();
+            self.state.aviation = aviation::Client::idle();
+            self.state.aviation.gramet = gramet;
+            return (true, None);
+        }
+        self.aviation_enabled = true;
+        self.aviation.forget();
+        match pin {
+            None => {
+                self.aviation_icao = None;
+                if let Some((lat, lon)) = self.aviation_center {
+                    let _ = self.request_aviation(lat, lon);
+                    if self.state.aviation.status == protocol::AviationStatus::Idle {
+                        let gramet = self.state.aviation.gramet.clone();
+                        self.state.aviation = aviation::Client::loading();
+                        self.state.aviation.gramet = gramet;
+                        self.aviation_wake.notify_one();
+                    }
+                    (true, None)
+                } else {
+                    let gramet = self.state.aviation.gramet.clone();
+                    self.state.aviation = aviation::Client::loading();
+                    self.state.aviation.gramet = gramet;
+                    (true, None)
+                }
+            }
+            Some(id) => {
+                self.aviation_icao = Some(id.clone());
+                let gramet = self.state.aviation.gramet.clone();
+                self.state.aviation = aviation::Client::loading_station(&id);
+                self.state.aviation.gramet = gramet;
+                self.aviation_wake.notify_one();
+                (true, None)
+            }
+        }
     }
     fn request_field(&mut self, lat: f64, lon: f64) -> bool {
         if self.state.source != Source::Live || self.field_sel.is_none() {
@@ -1311,6 +1373,7 @@ impl Shared {
                 cruise_kt,
                 flight_level,
             } => self.set_gramet(&origin, &destination, cruise_kt, flight_level),
+            Command::SetAviation { enabled, icao } => self.set_aviation(enabled, &icao),
             Command::SeekHistory { time } => self.seek_history(&time),
             Command::StepHistory { delta } => self.step_history(delta),
             Command::SetWeather {
@@ -1413,8 +1476,9 @@ fn decode_and_publish(dir: &Path, template: &Frame, archive: &[u8]) -> io::Resul
     );
     Ok((frame, sweep.start_ms))
 }
-/// Fetch the aviation briefing for the last settled view centre. Archived
-/// daemons never wake this path; live `view_center` does.
+/// Fetch the aviation briefing for a pinned ICAO or the last settled view
+/// centre. Archived daemons never wake this path; live `view_center` and
+/// `set_aviation` do.
 async fn aviation_loop(
     shared: Arc<Mutex<Shared>>,
     client: Arc<aviation::Client>,
@@ -1423,29 +1487,48 @@ async fn aviation_loop(
     loop {
         wake.notified().await;
         sleep(Duration::from_millis(250)).await;
-        let Some((lat, lon)) = shared.lock().unwrap().aviation_center else {
-            continue;
+        let (icao, center, live, enabled) = {
+            let shared = shared.lock().unwrap();
+            (
+                shared.aviation_icao.clone(),
+                shared.aviation_center,
+                shared.state.source == Source::Live,
+                shared.aviation_enabled,
+            )
         };
-        if shared.lock().unwrap().state.source != Source::Live {
+        if !live || !enabled {
             continue;
         }
-        if !client.should_refresh(lat, lon) {
-            continue;
-        }
-        {
-            let mut shared = shared.lock().unwrap();
-            if shared.state.aviation.status == protocol::AviationStatus::Idle {
-                shared.state.aviation.status = protocol::AviationStatus::Loading;
-                shared.broadcast();
+        let briefing = if let Some(icao) = icao.clone() {
+            client.fetch_station(&icao).await
+        } else {
+            let Some((lat, lon)) = center else {
+                continue;
+            };
+            if !client.should_refresh(lat, lon) {
+                continue;
             }
-        }
-        let briefing = client.fetch(lat, lon).await;
+            {
+                let mut shared = shared.lock().unwrap();
+                if shared.state.aviation.status == protocol::AviationStatus::Idle {
+                    shared.state.aviation.status = protocol::AviationStatus::Loading;
+                    shared.broadcast();
+                }
+            }
+            client.fetch(lat, lon).await
+        };
         let mut shared = shared.lock().unwrap();
         if shared.state.source != Source::Live {
             continue;
         }
+        if shared.aviation_icao != icao {
+            continue;
+        }
         let mut briefing = briefing;
         briefing.gramet = shared.state.aviation.gramet.clone();
+        if !shared.aviation_enabled {
+            continue;
+        }
         if set(&mut shared.state.aviation, briefing) {
             shared.broadcast();
         }
@@ -2451,6 +2534,8 @@ fn serve(dir: PathBuf) -> io::Result<()> {
         last_broadcast: String::new(),
         aviation: aviation_client.clone(),
         aviation_center: None,
+        aviation_icao: None,
+        aviation_enabled: false,
         aviation_wake: aviation_wake.clone(),
         field_center: None,
         field_source: "nexrad".into(),

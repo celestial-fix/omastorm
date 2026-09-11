@@ -34,6 +34,10 @@ Item {
     property bool locked: false      // the accent frame on the active marker and tag (DESIGN.md, markers)
     property var hazards: []         // aviation polygons from state.aviation.hazards
     property var route: []           // open GRAMET track from state.aviation.gramet.coords
+    property var airports: []        // nearby ICAO aerodromes from state.aviation.stations
+    property string aviationIcao: "" // pinned briefing id; empty follows the view
+    signal icaoPicked(string icao, real lat, real lon)
+
     // A frame with a scan time is radar to draw. The loading placeholder
     // (docs/protocol.md, frame.status: no scan time, one blank row) draws no
     // radar; tiles, labels, markers, and coverage still show, so a station
@@ -152,6 +156,7 @@ Item {
     // Issued-bulletin tooltip (DESIGN.md, aviation). The polygon is hit-tested
     // in lat/lon; the card itself sits in screen space so pan does not carry it.
     property var hoverHazard: null
+    property var hoverAirport: null
     property real hoverX: 0
     property real hoverY: 0
     property bool hoverLive: false
@@ -179,7 +184,18 @@ Item {
         return Math.abs(area);
     }
     function hazardRank(kind) {
-        return kind === "sigmet" ? 0 : kind === "airmet" ? 1 : kind === "gramet" ? 2 : 3;
+        return kind === "sigmet" ? 0 : kind === "airmet" ? 1 : kind === "notam" ? 2 : kind === "gramet" ? 3 : 4;
+    }
+    function airportAt(px, py) {
+        var best = null, bestD = 14 * 14;
+        for (var s of airports) {
+            if (!s) continue;
+            var dx = sx(mercatorX(s.lon)) - px;
+            var dy = sy(mercatorY(s.lat)) - py;
+            var d = dx * dx + dy * dy;
+            if (d < bestD) { best = s; bestD = d; }
+        }
+        return best;
     }
     function hazardAt(px, py) {
         var at = latLonAt(px, py);
@@ -197,7 +213,12 @@ Item {
     }
     function hoverAt(px, py) {
         hoverX = px; hoverY = py; hoverLive = true;
-        hoverHazard = hazardAt(px, py);
+        hoverAirport = airportAt(px, py);
+        hoverHazard = hoverAirport ? null : hazardAt(px, py);
+    }
+    function airportTitle(s) {
+        if (!s || !s.id) return "";
+        return s.id === aviationIcao ? s.id + " · PINNED" : s.id;
     }
     function hazardTitle(h) {
         if (!h) return "";
@@ -205,6 +226,7 @@ Item {
         return h.hazard ? kind + " · " + String(h.hazard).toUpperCase() : kind;
     }
     onHazardsChanged: if (hoverLive) hoverAt(hoverX, hoverY)
+    onAirportsChanged: if (hoverLive) hoverAt(hoverX, hoverY)
 
     // Tile layer (DESIGN.md, basemap tiles). The zoom whose 512 px tiles land
     // nearest 1:1 on screen is requested for the visible rectangle when the
@@ -363,8 +385,11 @@ Item {
     property var places: []
     property var labels: []
     property var siteLabels: []
+    property var airportLabels: []
     onSitesChanged: scheduleLayout()
     onSiteIdChanged: scheduleLayout()
+    onAirportsChanged: scheduleLayout()
+    onAviationIcaoChanged: scheduleLayout()
     onWidthChanged: { scheduleLayout(); settle.restart(); }
     onHeightChanged: { scheduleLayout(); settle.restart(); }
     onWorldPixelsChanged: { scheduleLayout(); Qt.callLater(refreshOverlay); }
@@ -398,7 +423,7 @@ Item {
     }
     function rebuildLabels() {
         var started = Date.now();
-        if (!scan) { labels = []; siteLabels = []; return; }
+        if (!scan) { labels = []; siteLabels = []; airportLabels = []; return; }
         labelMetrics.text = siteId;
         var occupied = [{x:-7, y:-7, w:14, h:14},
                         {x:7, y:4, w:labelMetrics.advanceWidth+6, h:16}], result = [], stations = [];
@@ -427,6 +452,25 @@ Item {
             stations.push({name:s.id, x:chosen.x, y:chosen.y, width:tw+6});
         }
         siteLabels = stations;
+        var airTags = [];
+        var airCandidates = (airports || []).filter(s => s && s.id
+            && Math.abs(mercatorX(s.lon)-overlayX) <= overlayHalfX
+            && Math.abs(mercatorY(s.lat)-overlayY) <= overlayHalfY).sort((a, b) => a.id.localeCompare(b.id));
+        for (var s of airCandidates) {
+            var ax = (mercatorX(s.lon) - siteMx) * worldPixels;
+            var ay = (mercatorY(s.lat) - siteMy) * worldPixels;
+            labelMetrics.text = s.id;
+            var aw = labelMetrics.advanceWidth, chosen = null;
+            for (var q of [{x:ax+10,y:ay+4}, {x:ax-aw-16,y:ay+4},
+                           {x:ax+10,y:ay-20}, {x:ax-aw-16,y:ay-20}]) {
+                if (occupied.some(o => q.x<o.x+o.w+5 && q.x+aw+11>o.x && q.y<o.y+o.h+4 && q.y+20>o.y)) continue;
+                chosen = q; break;
+            }
+            if (!chosen) continue;
+            occupied.push({x:chosen.x,y:chosen.y,w:aw+6,h:16});
+            airTags.push({name:s.id, x:chosen.x, y:chosen.y, width:aw+6, pinned: s.id === aviationIcao});
+        }
+        airportLabels = airTags;
         for (var p of places) {
             labelMetrics.text = p.name;
             var tx = (mercatorX(p.lon) - siteMx) * worldPixels, ty = (mercatorY(p.lat) - siteMy) * worldPixels;
@@ -664,7 +708,37 @@ Item {
             }
         }
         Repeater {
-            model: map.siteLabels
+            model: map.airports
+            Rectangle {
+                required property var modelData
+                readonly property bool pinned: modelData && modelData.id === map.aviationIcao
+                x: (map.mercatorX(modelData.lon)-map.siteMx)*map.worldPixels-4
+                y: (map.mercatorY(modelData.lat)-map.siteMy)*map.worldPixels-4
+                width: 8; height: 8
+                rotation: 45
+                color: pinned ? map.theme.accent : map.theme.background
+                border.width: 1
+                border.color: pinned ? map.theme.accent : map.theme.foreground
+            }
+        }
+        Repeater {
+            model: map.airportLabels
+            Rectangle {
+                required property var modelData
+                x: modelData.x; y: modelData.y
+                width: modelData.width; height: 16
+                visible: overlayCamera.x+x >= 8 && overlayCamera.x+x+width <= map.width-8
+                    && overlayCamera.y+y >= 26 && overlayCamera.y+y+height <= map.height-30
+                color: Qt.alpha(map.theme.background, .88)
+                border.width: modelData.pinned ? 1 : 0
+                border.color: map.theme.accent
+                Text {
+                    x: 3; anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.name; color: modelData.pinned ? map.theme.accent : map.theme.foreground
+                    font.family: map.theme.font; font.pixelSize: map.labelSize
+                }
+            }
+        }
             Rectangle {
                 required property var modelData
                 x: modelData.x; y: modelData.y
@@ -726,7 +800,7 @@ Item {
     }
     Rectangle {
         id: hazardTip
-        visible: !!map.hoverHazard && !pointer.pressed
+        visible: (!!map.hoverAirport || !!map.hoverHazard) && !pointer.pressed
         width: tipColumn.implicitWidth + 24
         height: tipColumn.implicitHeight + 20
         x: {
@@ -752,7 +826,7 @@ Item {
             width: Math.min(360, Math.max(160, map.width - 48))
             Text {
                 width: parent.width
-                text: map.hazardTitle(map.hoverHazard)
+                text: map.hoverAirport ? map.airportTitle(map.hoverAirport) : map.hazardTitle(map.hoverHazard)
                 color: map.theme.foreground
                 font.family: map.theme.font
                 font.pixelSize: 12
@@ -762,7 +836,18 @@ Item {
             }
             Text {
                 width: parent.width
-                visible: !!(map.hoverHazard && map.hoverHazard.raw)
+                visible: !!map.hoverAirport
+                text: map.hoverAirport && map.hoverAirport.id === map.aviationIcao
+                      ? "Click to follow the map" : "Click to pin METAR / TAF"
+                color: map.theme.foreground
+                opacity: .75
+                font.family: map.theme.font
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+            Text {
+                width: parent.width
+                visible: !map.hoverAirport && !!(map.hoverHazard && map.hoverHazard.raw)
                 text: map.hoverHazard && map.hoverHazard.raw ? map.hoverHazard.raw : ""
                 color: map.theme.foreground
                 opacity: .75
@@ -777,17 +862,27 @@ Item {
         anchors.fill: parent
         z: 2
         hoverEnabled: true
-        cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+        cursorShape: pressed ? Qt.ClosedHandCursor : (map.hoverAirport ? Qt.PointingHandCursor : Qt.OpenHandCursor)
         property real lastX
         property real lastY
-        onPressed: mouse => { lastX=mouse.x; lastY=mouse.y; map.hoverHazard = null; }
-        onReleased: mouse => map.hoverAt(mouse.x, mouse.y)
-        onExited: { map.hoverLive = false; map.hoverHazard = null; }
+        property bool dragged: false
+        onPressed: mouse => {
+            lastX = mouse.x; lastY = mouse.y; dragged = false;
+            map.hoverHazard = null; map.hoverAirport = null;
+        }
+        onReleased: mouse => {
+            map.hoverAt(mouse.x, mouse.y);
+            if (!dragged && map.hoverAirport)
+                map.icaoPicked(map.hoverAirport.id, map.hoverAirport.lat, map.hoverAirport.lon);
+        }
+        onExited: { map.hoverLive = false; map.hoverHazard = null; map.hoverAirport = null; }
         onPositionChanged: mouse => {
             if (pressed) {
+                if (Math.hypot(mouse.x - lastX, mouse.y - lastY) > 4) dragged = true;
                 map.look(map.viewCenterX - (mouse.x-lastX)*map.unitsPerPixel, map.viewCenterY - (mouse.y-lastY)*map.unitsPerPixel);
                 lastX=mouse.x; lastY=mouse.y;
                 map.hoverHazard = null;
+                map.hoverAirport = null;
             } else {
                 map.hoverAt(mouse.x, mouse.y);
             }

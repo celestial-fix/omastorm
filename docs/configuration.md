@@ -104,6 +104,10 @@ coverage is outside the view. Never relocate the camera or discard the lock
 silently. The chrome says `LOCKED · OUTSIDE COVERAGE` when the camera sits
 outside that radar's rings.
 
+- `aviation`: `true` starts in aviation mode (METAR/TAF). Omit or `false`
+  is normal weather. The UI toggle writes state, not this file; config
+  applies again on launch.
+
 For agent-assisted installation, write coordinate overrides only when the
 user requests a fixed launch location. Ordinary installation leaves them
 unset so weather location or onboarding establishes a remembered view.
@@ -137,7 +141,7 @@ the machine's own state and weather files are not read unless
   (`Shift+O`), `source_gfs` (`Shift+G`), `source_ecmwf` (`Shift+E`),
   `source_wrf` (`Shift+F`), `source_cdo` (`Shift+C`),
   `source_meteostat` (`Shift+M`), `run_wrf` (`Shift+X`), `gramet`
-  (`Shift+A`), `altitude_down`
+  (`Shift+A`), `aviation` (`a`), `icao` (`i`), `altitude_down`
   `altitude_up` (`Shift+[` `Shift+]`), `weak` (`w`), `export` (`e`), `help` (`?`), `close`
   (`Escape`).
   A value that is not a quoted string, a sequence Qt cannot parse, an
@@ -151,11 +155,11 @@ the machine's own state and weather files are not read unless
 ## Remembered state
 
 `~/.local/state/omastorm/state.json` is written atomically (a temporary file
-renamed into place). It holds the last map centre, span in kilometres, and
-the UI radar lock when one is set:
+renamed into place). It holds the last map centre, span in kilometres,
+the UI radar lock when one is set, and aviation mode:
 
 ```json
-{"lat":30.332,"lon":-81.656,"span":210,"lock":"KJAX","name":"Jacksonville"}
+{"lat":30.332,"lon":-81.656,"span":210,"lock":"KJAX","name":"Jacksonville","aviation":true,"icao":"KJAX"}
 ```
 
 Invalid fields are dropped. A missing file is no remembered view.

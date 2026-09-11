@@ -192,23 +192,33 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   read, and name OpenFreeMap by its host before that. The UI shows
   `osm.attribution` verbatim whenever an `osm` tile is on screen. It is
   shared state: a change is broadcast like any other.
-- `aviation` is the briefing for the last settled `view_center`, fetched
-  only in live mode from NOAA's Aviation Weather Center. Archived daemons
-  and a live daemon that has not yet received a centre stay
-  `status` `idle`. After a centre arrives, `loading` is replaced by `ok`
-  (a METAR, TAF, or hazard), `unavailable` (the feed answered and nothing
-  was near the view), or `offline` (the feed could not be read). `station`
-  is the nearest METAR; `metar` and `taf` carry `raw` bulletin text and
-  `time` (observation or issue, ISO-8601). TAF may add `validFrom` /
-  `validTo`. `hazards` are SIGMET, AIRMET, GAMET, and issued GRAMET
-  bulletins whose polygons intersect the view, each with `kind`, `hazard`,
-  `raw`, and `coords` `[{lat,lon}, …]`. The UI draws those polygons and
-  shows `raw` in a themed tooltip on hover. `aviation.gramet` is a separate
-  route briefing from `set_gramet` (origin and destination ICAO, cruise
-  TAS, optional flight level): `status`, airport fixes, `raw` text, an
-  open `coords` polyline, and sampled `legs`. It is not a GRIB file.
-  Radar values still never enter JSON; these are issued bulletins and
-  route text. `OMASTORM_AVIATION_URL` overrides the API root.
+- `aviation` is off until the client sends `set_aviation` with `enabled`
+  true (the default is normal weather: no METAR/TAF fetch). When enabled
+  in live mode it briefs the last settled `view_center`, or a pinned
+  four-letter `icao`. Chilean ICAO (`SC*`) and a view over Chile take
+  METAR, TAF, NOTAM, and SIGMET only from DGAC IFIS
+  (`aipchile.dgac.gob.cl`); everywhere else uses NOAA's Aviation Weather
+  Center. Archived daemons and a live daemon that has not yet received a
+  centre stay `status` `idle`. `enabled` is omitted when false. After a
+  centre arrives, `loading` is replaced by `ok` (a METAR, TAF, or
+  hazard), `unavailable` (the feed answered and nothing was near the
+  view), or `offline` (the feed could not be read). `station` is the
+  nearest METAR (or the pin); `stations` are nearby ICAO aerodromes the
+  map marks so a hover/click can pin one. `metar` and `taf` carry `raw`
+  bulletin text and `time` (observation or issue, ISO-8601). TAF may add
+  `validFrom` / `validTo`. `hazards` are SIGMET, AIRMET, GAMET, issued
+  GRAMET, and Chilean NOTAM bulletins whose polygons intersect the view,
+  each with `kind` (`sigmet` | `airmet` | `gamet` | `gramet` | `notam`),
+  `hazard`, `raw`, and `coords` `[{lat,lon}, …]`. The UI draws those
+  polygons and ICAO markers and shows `raw` (or the ICAO id) in a themed
+  tooltip on hover. `aviation.gramet` is a separate route briefing from
+  `set_gramet` (origin and destination ICAO, cruise TAS, optional flight
+  level): `status`, airport fixes, `raw` text, an open `coords`
+  polyline, and sampled `legs`. It is not a GRIB file. Radar values still
+  never enter JSON; these are issued bulletins and route text.
+  `OMASTORM_AVIATION_URL` overrides the AWC root;
+  `OMASTORM_CHILE_URL` overrides the IFIS root (default
+  `https://aipchile.dgac.gob.cl`).
 - `history` is the CDO / Meteostat time cursor. Archived daemons and a
   live daemon that has not selected those sources stay `status` `idle`.
   After `set_source` `cdo` or `meteostat`, `loading` is replaced by `ok`
@@ -230,6 +240,9 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 {"type":"set_product","product":"REF","elevationIndex":0}
 {"type":"set_source","source":"gfs"}
 {"type":"set_gramet","origin":"SCEL","destination":"SCFA","cruiseKt":420,"flightLevel":350}
+{"type":"set_aviation","enabled":true}
+{"type":"set_aviation","enabled":true,"icao":"SCEL"}
+{"type":"set_aviation","enabled":false}
 {"type":"seek_history","time":"2020-01-15"}
 {"type":"step_history","delta":-1}
 {"type":"estimate_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
@@ -257,9 +270,10 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   hand-off is a `select_site`, so `state` is broadcast and an uncached
   station opens on the loading placeholder. When every table station is
   farther than 460 km, the engine leaves the sweep and shows the map
-  without radar, sited on the view centre. Live mode also refreshes
-  `aviation` for that centre. Locked or not following, the radar is left
-  alone and the briefing still updates. The engine never moves the camera:
+  without radar, sited on the view centre. Live mode notes that centre
+  for aviation; the briefing itself only fetches after `set_aviation`
+  `enabled` true. Locked or not following, the radar is left
+  alone and an enabled briefing still updates. The engine never moves the camera:
   the centre is the user's. A latitude outside ±90 or a longitude outside
   ±180 is answered with an `error`. `lock` and `follow` are shared flags;
   releasing the lock hands off on the next settle, not at once.
@@ -307,6 +321,11 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   (50–450, default 350). The engine resolves the airports from AWC
   stationinfo and samples Open-Meteo along the great-circle. Archived
   mode rejects it. A bad ICAO or TAS is an `error` to the sender.
+- `set_aviation` turns the live briefing on or off. `enabled` is
+  required. Optional `icao` is a four-letter id that pins METAR/TAF;
+  empty (or omitted) follows the last `view_center`. Pans do not replace
+  a pin. Chilean `SC*` pins and a Chile view use DGAC IFIS only.
+  Archived mode rejects it. A bad ICAO is an `error` to the sender.
 - `seek_history` jumps the CDO / Meteostat cursor to an ISO date or
   hour. `step_history` moves `delta` days (`cdo`) or hours
   (`meteostat`) and clamps to the archive window. Both need a history

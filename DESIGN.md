@@ -114,14 +114,20 @@ Meteostat. A local WRF-ARW run is an opt-in forecast producer: the engine
 estimates wall time from domain area, grid spacing, forecast hours, and
 cores, then an explicit command may start the WRF Docker image on this
 machine. The engine rasterizes fields onto the same sweep texture the
-shader already samples; values still do not enter QML. Live mode may also
-carry an aviation briefing for the view: METAR (observed), TAF as issued
-bulletin text, SIGMET / AIRMET / GAMET / issued GRAMET polygons, and a
-route GRAMET from origin and destination ICAO plus cruise TAS. That
-briefing is bulletin text and a polyline, not a drawn model field. Hovering
-a hazard polygon shows the issued bulletin in a tooltip that uses the same
-theme font and colors as the rest of the chrome. Raw GRIB / NetCDF files
-stay out of the UI; WRF wrfout stays in the cache directory.
+shader already samples; values still do not enter QML. Aviation is opt-in
+(NORMAL by default): live mode may carry a briefing for the view or a
+pinned ICAO — METAR (observed), TAF as issued bulletin text, SIGMET /
+AIRMET / GAMET / issued GRAMET / Chilean NOTAM polygons, and a route
+GRAMET from origin and destination ICAO plus cruise TAS. Chile (`SC*`
+and a view over the country) uses DGAC IFIS (`aipchile.dgac.gob.cl`) as
+the only bulletin source. That briefing is bulletin text and a polyline,
+not a drawn model field. Hovering a hazard polygon shows the issued
+bulletin in a tooltip that uses the same theme font and colors as the
+rest of the chrome; hovering an ICAO marker names the aerodrome, and a
+click (or the ICAO text picker) pins it. The engine never moves the
+camera: the UI looks at a station only after that explicit pick. Raw
+GRIB / NetCDF files stay out of the UI; WRF wrfout stays in the cache
+directory.
 
 The live poller follows the latest volume. `try_next` returning no chunk is
 normal between chunks, but 90 seconds with no chunk at all means the
