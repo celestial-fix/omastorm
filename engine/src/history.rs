@@ -74,9 +74,8 @@ pub fn default_time(source: &str) -> String {
 }
 
 pub fn step_time(source: &str, time: &str, delta: i64) -> Result<String, String> {
-    if delta == 0 {
-        return Ok(normalize_time(source, time));
-    }
+    // delta == 0 parses and clamps in place. Do not call normalize_time here:
+    // normalize_time calls step_time(..., 0), and that cycle stack-overflows.
     if source == "meteostat" {
         let t =
             parse_hour(time).ok_or_else(|| String::from("Meteostat time must be an ISO hour."))?;
@@ -486,6 +485,22 @@ mod tests {
         );
         assert_eq!(step_of("cdo"), "day");
         assert_eq!(step_of("meteostat"), "hour");
+    }
+
+    #[test]
+    fn normalize_time_and_zero_delta_do_not_recurse() {
+        assert_eq!(normalize_time("cdo", "2020-01-15"), "2020-01-15");
+        assert_eq!(
+            normalize_time("meteostat", "2020-01-15T12:00:00Z"),
+            "2020-01-15T12:00:00Z"
+        );
+        assert_eq!(step_time("cdo", "2020-01-15", 0).unwrap(), "2020-01-15");
+        assert_eq!(
+            step_time("meteostat", "2020-01-15 12:00:00", 0).unwrap(),
+            "2020-01-15T12:00:00Z"
+        );
+        assert!(!normalize_time("cdo", "  ").is_empty());
+        assert!(!normalize_time("meteostat", "").is_empty());
     }
 
     #[test]
