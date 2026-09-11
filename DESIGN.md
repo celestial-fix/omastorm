@@ -46,7 +46,7 @@ window's picker. Offer place search and "Enter coordinates", which reveals
 labeled latitude and longitude fields with validation. Place search is an
 engine `search_places` reply over GeoNames cities with population ≥ 5000
 worldwide (state/region and country so two Jacksonvilles are
-distinct); map labels stay Natural Earth. "Show radar" accepts the location.
+distinct; `santiago chile` is Santiago, CL); map labels stay Natural Earth. "Show radar" accepts the location.
 No separate setup wizard or settings window is required. Keep the picker
 reachable after onboarding (`Shift+H` and LOCATION). Coordinate entry
 chooses a view; it does not create a permanent config override or lock a

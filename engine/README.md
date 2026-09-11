@@ -131,8 +131,10 @@ are added separately. The band is 0.6×–1.8× that total. Ordinary
 ## Basemap
 
 `build.rs` converts Natural Earth lines to a compact polyline blob and embeds
-populated places for map labels. GeoNames cities with population ≥ 5000,
-clipped to the same envelope, are the location-picker gazetteer. The 1:50m
+populated places for map labels. GeoNames cities with population ≥ 5000
+worldwide are the location-picker gazetteer (name, region, and country;
+`santiago chile` matches Santiago, CL; a country-name token does not
+match city-name prefixes). The 1:50m
 set is global; the 1:10m set is clipped to the NEXRAD network envelope. `src/tiles.rs` rasterizes these with `tiny-skia`,
 using 1:50m below z5 and 1:10m from z5. Segments outside a tile are skipped.
 

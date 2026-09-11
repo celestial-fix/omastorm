@@ -495,40 +495,78 @@ pub fn render(geography: &Geography, key: TileKey) -> io::Result<Vec<u8>> {
 }
 
 /// Ranked gazetteer places matching `query` for the location picker
-/// (GeoNames ≥ 5000 people worldwide). Word-start matches
-/// beat substrings; nearer the optional origin, then lower rank, win
-/// within a tier. Empty or blank queries return nothing.
+/// (GeoNames ≥ 5000 people worldwide). Each whitespace token must match
+/// the name, region, or country (ISO code or English name). A token that
+/// is a country name or alias (`chile`, `usa`) filters by country and
+/// does not match city-name prefixes. Word-start name matches beat
+/// substrings. A country or region token filters first, then nearer the
+/// optional origin, then lower rank, win within a tier. Empty or blank
+/// queries return nothing.
 pub fn search_places(query: &str, origin: Option<(f64, f64)>, limit: usize) -> Vec<Label> {
-    let needle = query.trim().to_lowercase();
-    if needle.is_empty() || limit == 0 {
+    let tokens: Vec<String> = query
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .filter(|t| !t.is_empty() && !matches!(t.as_str(), "de" | "del" | "the" | "of" | "and"))
+        .collect();
+    if tokens.is_empty() || limit == 0 {
         return Vec::new();
     }
-    let mut scored: Vec<(u32, f64, u32, &Place)> = Vec::new();
+    let mut scored: Vec<(u32, u32, f64, u32, &Place)> = Vec::new();
     for place in gazetteer() {
-        let name = place.name.to_lowercase();
-        let tier = if word_start(&name, &needle) {
-            0
-        } else if name.contains(&needle) {
-            1
-        } else {
+        let Some((name_tier, geo_filter)) = place_match(place, &tokens) else {
             continue;
         };
         let distance = origin.map_or(0.0, |(lat, lon)| {
             great_circle_km(lat, lon, place.lat, place.lon)
         });
-        scored.push((tier, distance, place.rank, place));
+        // Country/region tokens filter the set; rank then distance so
+        // Santiago, Chile wins from a US view. A bare name still prefers
+        // nearer matches (Springfield while looking at Illinois).
+        let rank_key = if geo_filter { place.rank } else { 0 };
+        scored.push((name_tier, rank_key, distance, place.rank, place));
     }
     scored.sort_by(|a, b| {
         a.0.cmp(&b.0)
-            .then(a.1.total_cmp(&b.1))
-            .then(a.2.cmp(&b.2))
-            .then(a.3.name.cmp(&b.3.name))
+            .then(a.1.cmp(&b.1))
+            .then(a.2.total_cmp(&b.2))
+            .then(a.3.cmp(&b.3))
+            .then(a.4.name.cmp(&b.4.name))
     });
     scored
         .into_iter()
         .take(limit)
-        .map(|(_, _, _, place)| place.label())
+        .map(|(_, _, _, _, place)| place.label())
         .collect()
+}
+
+/// `name_tier` is 0 for a name word-start, 1 for a name substring, 2 when
+/// only region/country matched. `geo_filter` is true when a token hit
+/// region or country.
+fn place_match(place: &Place, tokens: &[String]) -> Option<(u32, bool)> {
+    let name = place.name.to_lowercase();
+    let region = place.region.to_lowercase();
+    let mut name_tier = 2_u32;
+    let mut geo_filter = false;
+    let region_hit =
+        |token: &str| !region.is_empty() && (word_start(&region, token) || region.contains(token));
+    for token in tokens {
+        if crate::countries::is_country_name_token(token) {
+            if crate::countries::token_matches(&place.country, token) || region_hit(token) {
+                geo_filter = true;
+            } else {
+                return None;
+            }
+        } else if word_start(&name, token) {
+            name_tier = 0;
+        } else if name.contains(token) {
+            name_tier = name_tier.min(1);
+        } else if region_hit(token) || crate::countries::token_matches(&place.country, token) {
+            geo_filter = true;
+        } else {
+            return None;
+        }
+    }
+    Some((name_tier, geo_filter))
 }
 
 fn word_start(text: &str, needle: &str) -> bool {
@@ -829,7 +867,9 @@ mod tests {
         assert!(
             oklahoma
                 .iter()
-                .all(|p| p.name.to_lowercase().contains("oklahoma"))
+                .all(|p| p.name.to_lowercase().contains("oklahoma")
+                    || p.region.eq_ignore_ascii_case("Oklahoma")),
+            "oklahoma matches the name or the state: {oklahoma:?}"
         );
         let norman = search_places("norman", None, 4);
         assert_eq!(norman[0].name, "Norman");
@@ -847,6 +887,23 @@ mod tests {
         let santiago = search_places("santiago", Some((-33.45, -70.67)), 8);
         assert_eq!(santiago[0].name, "Santiago");
         assert_eq!(santiago[0].country, "CL");
+        let from_carolina = search_places("santiago chile", Some((36.24, -79.98)), 8);
+        assert_eq!(from_carolina[0].name, "Santiago");
+        assert_eq!(from_carolina[0].country, "CL");
+        assert!(
+            from_carolina.iter().all(|p| p.country == "CL"),
+            "chile filters to CL: {from_carolina:?}"
+        );
+        let chile = search_places("chile", Some((-33.45, -70.67)), 8);
+        assert_eq!(chile[0].name, "Santiago");
+        assert_eq!(chile[0].country, "CL");
+        assert!(
+            chile.iter().all(|p| p.country == "CL"),
+            "chile is the country, not Chilecito: {chile:?}"
+        );
+        let de_chile = search_places("santiago de chile", Some((36.24, -79.98)), 8);
+        assert_eq!(de_chile[0].name, "Santiago");
+        assert_eq!(de_chile[0].country, "CL");
         assert!(gazetteer().len() > 15_000);
         assert!(gazetteer().len() > Geography::embedded().places.len());
     }

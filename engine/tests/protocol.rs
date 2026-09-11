@@ -299,6 +299,13 @@ fn fixture_transport_and_shared_commands() {
     assert_eq!(places["results"][0]["country"], "CL");
     send(
         &mut first,
+        json!({"type":"search_places","query":"santiago chile","lat":36.24,"lon":-79.98}),
+    );
+    let places = read(&mut first);
+    assert_eq!(places["results"][0]["name"], "Santiago");
+    assert_eq!(places["results"][0]["country"], "CL");
+    send(
+        &mut first,
         json!({"type":"search_places","query":"x","lat":95.0,"lon":0.0}),
     );
     let e = read(&mut first);

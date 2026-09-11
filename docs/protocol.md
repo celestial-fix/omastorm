@@ -266,8 +266,15 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   with population ≥ 5000, worldwide) for the
   location picker and is answered with `places` to the sender only, like
   `tile_ready`. Map labels stay on Natural Earth. `query` is required;
-  optional `lat` and `lon` order nearer matches first. Word-start matches
-  beat substrings. At most eight results. A blank query returns no results.
+  whitespace splits it into tokens, and every token must match the name,
+  `region`, or `country` (ISO 3166-1 alpha-2 or the English short name, so
+  `santiago chile` reaches Santiago, CL). A token that is a country name or
+  alias (`chile`, `usa`) filters by country and does not match city-name
+  prefixes (Chilecito, AR). Optional `lat` and `lon` order nearer matches
+  first unless a token named the country or region, in which case population
+  rank wins so a capital is not buried by a nearer namesake. Word-start
+  name matches beat substrings. At most eight results. A blank query
+  returns no results.
   A latitude or longitude outside range is answered with an `error`. The
   reply is not shared state:
 
