@@ -202,7 +202,8 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   `time` (observation or issue, ISO-8601). TAF may add `validFrom` /
   `validTo`. `hazards` are SIGMET, AIRMET, GAMET, and issued GRAMET
   bulletins whose polygons intersect the view, each with `kind`, `hazard`,
-  `raw`, and `coords` `[{lat,lon}, …]`. `aviation.gramet` is a separate
+  `raw`, and `coords` `[{lat,lon}, …]`. The UI draws those polygons and
+  shows `raw` in a themed tooltip on hover. `aviation.gramet` is a separate
   route briefing from `set_gramet` (origin and destination ICAO, cruise
   TAS, optional flight level): `status`, airport fixes, `raw` text, an
   open `coords` polyline, and sampled `legs`. It is not a GRIB file.

@@ -30,7 +30,8 @@ client: it displays those textures in the bar popover and full window.
 - **Aviation briefing.** Live METAR, TAF, SIGMET, AIRMET, and GAMET for
   the view, from NOAA's Aviation Weather Center, plus a route GRAMET from
   origin and destination ICAO and cruise TAS. Hazard polygons and the
-  route track draw on the map.
+  route track draw on the map; hover a SIGMET (or AIRMET / GAMET) for the
+  issued bulletin.
 - **Field layers.** Live wind, pressure, water, temperature, and
   precipitation. Reports (NEXRAD, Open-Meteo now, NOAA CDO, Meteostat)
   stay separate from forecasts (GFS, ECMWF IFS, optional local WRF).

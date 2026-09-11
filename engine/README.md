@@ -92,7 +92,8 @@ from origin and destination ICAO plus cruise TAS (optional flight
 level): AWC stationinfo plus Open-Meteo samples along the great-circle.
 Archived mode and ordinary checks never fetch. `OMASTORM_AVIATION_URL`
 overrides the API root. The UI shows issued bulletin text, hazard
-polygons, and the route polyline; it does not decode GRIB or NetCDF.
+polygons, and the route polyline; hovering a polygon shows that bulletin
+in a themed tooltip. It does not decode GRIB or NetCDF.
 
 ## Field layers
 

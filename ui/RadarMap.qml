@@ -149,6 +149,62 @@ Item {
     // Mercator units to viewport pixels.
     function sx(mx) { return width / 2 + (mx - viewCenterX) * worldPixels; }
     function sy(my) { return height / 2 + (my - viewCenterY) * worldPixels; }
+    // Issued-bulletin tooltip (DESIGN.md, aviation). The polygon is hit-tested
+    // in lat/lon; the card itself sits in screen space so pan does not carry it.
+    property var hoverHazard: null
+    property real hoverX: 0
+    property real hoverY: 0
+    property bool hoverLive: false
+    property alias hoverTip: hazardTip
+    function latLonAt(px, py) {
+        return {
+            lat: latitude(viewCenterY + (py - height / 2) * unitsPerPixel),
+            lon: longitude(viewCenterX + (px - width / 2) * unitsPerPixel)
+        };
+    }
+    function pointInRing(lat, lon, coords) {
+        var inside = false;
+        for (var i = 0, j = coords.length - 1; i < coords.length; j = i++) {
+            var yi = coords[i].lat, xi = coords[i].lon;
+            var yj = coords[j].lat, xj = coords[j].lon;
+            if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi))
+                inside = !inside;
+        }
+        return inside;
+    }
+    function ringArea(coords) {
+        var area = 0;
+        for (var i = 0, j = coords.length - 1; i < coords.length; j = i++)
+            area += coords[j].lon * coords[i].lat - coords[i].lon * coords[j].lat;
+        return Math.abs(area);
+    }
+    function hazardRank(kind) {
+        return kind === "sigmet" ? 0 : kind === "airmet" ? 1 : kind === "gramet" ? 2 : 3;
+    }
+    function hazardAt(px, py) {
+        var at = latLonAt(px, py);
+        var best = null, bestRank = 99, bestArea = Infinity;
+        for (var h of hazards) {
+            if (!h || !h.coords || h.coords.length < 3 || !pointInRing(at.lat, at.lon, h.coords))
+                continue;
+            var rank = hazardRank(h.kind);
+            var area = ringArea(h.coords);
+            if (rank < bestRank || (rank === bestRank && area < bestArea)) {
+                best = h; bestRank = rank; bestArea = area;
+            }
+        }
+        return best;
+    }
+    function hoverAt(px, py) {
+        hoverX = px; hoverY = py; hoverLive = true;
+        hoverHazard = hazardAt(px, py);
+    }
+    function hazardTitle(h) {
+        if (!h) return "";
+        var kind = (h.kind || "hazard").toUpperCase();
+        return h.hazard ? kind + " · " + String(h.hazard).toUpperCase() : kind;
+    }
+    onHazardsChanged: if (hoverLive) hoverAt(hoverX, hoverY)
 
     // Tile layer (DESIGN.md, basemap tiles). The zoom whose 512 px tiles land
     // nearest 1:1 on screen is requested for the visible rectangle when the
@@ -668,14 +724,73 @@ Item {
             }
         }
     }
+    Rectangle {
+        id: hazardTip
+        visible: !!map.hoverHazard && !pointer.pressed
+        width: tipColumn.implicitWidth + 24
+        height: tipColumn.implicitHeight + 20
+        x: {
+            var left = map.hoverX + 14;
+            if (left + width > map.width - 8) left = map.hoverX - width - 10;
+            return Math.round(Math.max(8, Math.min(map.width - width - 8, left)));
+        }
+        y: {
+            var top = map.hoverY + 14;
+            if (top + height > map.height - 8) top = map.hoverY - height - 10;
+            return Math.round(Math.max(8, Math.min(map.height - height - 8, top)));
+        }
+        // Below the pointer so hover stays on the map; the MouseArea is empty
+        // so this card still shows through.
+        z: 1
+        color: Qt.alpha(map.theme.background, .95)
+        border.width: 1
+        border.color: map.theme.foreground
+        Column {
+            id: tipColumn
+            x: 12; y: 10
+            spacing: 6
+            width: Math.min(360, Math.max(160, map.width - 48))
+            Text {
+                width: parent.width
+                text: map.hazardTitle(map.hoverHazard)
+                color: map.theme.foreground
+                font.family: map.theme.font
+                font.pixelSize: 12
+                font.bold: true
+                font.letterSpacing: 1
+                wrapMode: Text.Wrap
+            }
+            Text {
+                width: parent.width
+                visible: !!(map.hoverHazard && map.hoverHazard.raw)
+                text: map.hoverHazard && map.hoverHazard.raw ? map.hoverHazard.raw : ""
+                color: map.theme.foreground
+                opacity: .75
+                font.family: map.theme.font
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+        }
+    }
     MouseArea {
+        id: pointer
         anchors.fill: parent
+        z: 2
+        hoverEnabled: true
         cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
         property real lastX
         property real lastY
-        onPressed: mouse => { lastX=mouse.x; lastY=mouse.y; }
+        onPressed: mouse => { lastX=mouse.x; lastY=mouse.y; map.hoverHazard = null; }
+        onReleased: mouse => map.hoverAt(mouse.x, mouse.y)
+        onExited: { map.hoverLive = false; map.hoverHazard = null; }
         onPositionChanged: mouse => {
-            if(pressed) { map.look(map.viewCenterX - (mouse.x-lastX)*map.unitsPerPixel, map.viewCenterY - (mouse.y-lastY)*map.unitsPerPixel); lastX=mouse.x; lastY=mouse.y; }
+            if (pressed) {
+                map.look(map.viewCenterX - (mouse.x-lastX)*map.unitsPerPixel, map.viewCenterY - (mouse.y-lastY)*map.unitsPerPixel);
+                lastX=mouse.x; lastY=mouse.y;
+                map.hoverHazard = null;
+            } else {
+                map.hoverAt(mouse.x, mouse.y);
+            }
         }
         onWheel: wheel => {
             // Zoom about the pointer: the ground under it stays put.
