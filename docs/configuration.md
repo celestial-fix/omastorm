@@ -138,7 +138,7 @@ the machine's own state and weather files are not read unless
   `source_wrf` (`Shift+F`), `source_cdo` (`Shift+C`),
   `source_meteostat` (`Shift+M`), `run_wrf` (`Shift+X`), `gramet`
   (`Shift+A`), `altitude_down`
-  `altitude_up` (`Shift+[` `Shift+]`), `weak` (`w`), `help` (`?`), `close`
+  `altitude_up` (`Shift+[` `Shift+]`), `weak` (`w`), `export` (`e`), `help` (`?`), `close`
   (`Escape`).
   A value that is not a quoted string, a sequence Qt cannot parse, an
   unknown action, or a key another action already holds leaves that action

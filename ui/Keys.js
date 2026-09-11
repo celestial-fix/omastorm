@@ -7,7 +7,7 @@
 
 // Bindings are Qt key sequences separated by spaces: "h Left" binds both.
 // Shift+L is the lock because lowercase l pans; the digit keys pick a
-// treatment; `w` toggles the weak-return floor; `?` opens the sheet; Escape with nothing open closes the window.
+// treatment; `w` toggles the weak-return floor; `e` opens the export sheet; `?` opens the keys sheet; Escape with nothing open closes the window.
 var ACTIONS = [
     { id: "search", keys: "/ s" },
     { id: "nearest", keys: "n" },
@@ -46,6 +46,7 @@ var ACTIONS = [
     { id: "gramet", keys: "Shift+A" },
     { id: "altitude_down", keys: "Shift+[" },
     { id: "altitude_up", keys: "Shift+]" },
+    { id: "export", keys: "e" },
     { id: "help", keys: "?" },
     { id: "close", keys: "Escape" }
 ];
@@ -71,6 +72,7 @@ var ROWS = [
      { label: "route GRAMET", actions: ["gramet"] },
      { label: "layer altitude", actions: ["altitude_down", "altitude_up"] },
      { label: "weak returns: hide / show", actions: ["weak"] },
+     { label: "export chart", actions: ["export"] },
      { label: "this sheet · esc closes", actions: ["help"] }]
 ];
 var TREATMENTS = ["PIXELS", "GLYPHS", "STIPPLE"];

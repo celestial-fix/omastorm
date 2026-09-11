@@ -104,6 +104,17 @@ Item {
     }
     readonly property real centerLat: latitude(viewCenterY)
     readonly property real centerLon: longitude(viewCenterX)
+    /// Geographic box of the pixels on screen, for `export_report`.
+    function viewBox() {
+        var halfX = Math.max(width, 1) / 2 * unitsPerPixel;
+        var halfY = Math.max(height, 1) / 2 * unitsPerPixel;
+        return {
+            west: longitude(viewCenterX - halfX),
+            east: longitude(viewCenterX + halfX),
+            north: latitude(viewCenterY - halfY),
+            south: latitude(viewCenterY + halfY)
+        };
+    }
     // Centre the home view on a station before its frame arrives, so the
     // camera lands once where the state's site will put it.
     function jumpTo(lat, lon) {

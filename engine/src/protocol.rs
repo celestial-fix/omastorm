@@ -18,6 +18,7 @@ pub enum Message<'a> {
     Error(&'a Rejection<'a>),
     TileReady(&'a TileReady<'a>),
     Places(&'a Places<'a>),
+    ReportReady(&'a ReportReady<'a>),
 }
 
 /// One tile answering a client's `tiles_needed`, sent to that client alone
@@ -53,6 +54,23 @@ pub struct Label {
     pub region: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub country: String,
+}
+
+/// A finished chart answering one client's `export_report`. A reply, not
+/// shared state: only the sender hears it, and `state` does not change.
+#[derive(Serialize)]
+pub struct ReportReady<'a> {
+    pub v: u32,
+    /// `reports/<file>`, relative to `$XDG_DATA_HOME/omastorm/`.
+    pub path: &'a str,
+    pub projection: &'a str,
+    pub layers: &'a [String],
+    pub west: f64,
+    pub south: f64,
+    pub east: f64,
+    pub north: f64,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Places answering one client's `search_places`. A reply, not shared state:
@@ -310,6 +328,17 @@ pub fn is_tile_path(path: &str) -> bool {
             !name.is_empty() && name != "." && name != ".." && !name.contains(['\\', '\0'])
         })
         && parts.next().is_none()
+}
+
+/// Whether `path` names a chart the protocol allows: the literal `reports/`
+/// prefix and one further segment under the texture-name rule.
+pub fn is_report_path(path: &str) -> bool {
+    match path.strip_prefix("reports/") {
+        Some(name) => {
+            !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0'])
+        }
+        None => false,
+    }
 }
 
 impl State {
@@ -709,6 +738,17 @@ pub enum Command {
         #[serde(default)]
         lon: Option<f64>,
     },
+    /// Raster a Lambert conformal conic chart of the box. Answered with
+    /// `report_ready` to the sender; `layers` names the overlays to draw.
+    ExportReport {
+        west: f64,
+        south: f64,
+        east: f64,
+        north: f64,
+        layers: Vec<String>,
+        #[serde(default)]
+        width: Option<u32>,
+    },
     /// Anything newer than this build.
     #[serde(other)]
     Unsupported,
@@ -716,7 +756,22 @@ pub enum Command {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_texture_path, is_tile_path};
+    use super::{is_report_path, is_texture_path, is_tile_path};
+
+    #[test]
+    fn report_paths_are_one_segment_under_reports() {
+        assert!(is_report_path("reports/KTLX-20130520T201643Z-lcc-r1.png"));
+        for bad in [
+            "",
+            "reports",
+            "reports/",
+            "reports/.",
+            "reports/a/b.png",
+            "tex/a.png",
+        ] {
+            assert!(!is_report_path(bad), "{bad:?}");
+        }
+    }
 
     #[test]
     fn tile_paths_are_set_zoom_column_and_one_file() {

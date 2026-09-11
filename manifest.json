@@ -6,7 +6,7 @@
   "author": "Wes Grimes",
   "license": "MIT",
   "homepage": "https://omastorm.com",
-  "description": "Live NEXRAD radar for the Omarchy desktop",
+  "description": "Live NEXRAD radar for the Omarchy desktop (test: aviation, weather sources, LCC export)",
   "kinds": [
     "bar-widget",
     "panel"

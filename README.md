@@ -63,6 +63,22 @@ sha256 against `engine/release.pin`, and installs it under
 `~/.local/share/omastorm/bin`. Runtime files, cached data, remembered view state, and configuration stay
 inside Omastorm's own directories.
 
+This branch is a combined **plugin test** (aviation/GRAMET/WRF, weather APIs,
+Lambert chart export). The published pin does not speak its protocol. To
+install it on Omarchy, replace the official clone with this branch and use
+the engine that ships beside it (`bin/omastorm-engine`) or a checkout build:
+
+```sh
+omarchy plugin remove com.omastorm.radar
+git clone -b cursor/omarchy-plugin-test-e272 \
+  https://github.com/celestial-fix/omastorm.git \
+  ~/.config/omarchy/plugins/com.omastorm.radar
+# copy bin/omastorm-engine from the plugin archive into that directory, then:
+omarchy-shell shell rescanPlugins
+omarchy plugin enable com.omastorm.radar
+omarchy restart shell
+```
+
 On first use, Omastorm uses your Omarchy weather location when available;
 otherwise it prompts you to search for a place or enter coordinates. To set
 a fixed launch location, including during agent-assisted installation, see
@@ -122,11 +138,16 @@ cannot be reached, with cached frames kept.
 | `Shift+[` `Shift+]` | Layer altitude |
 | `Shift+R` | Radar (reflectivity) |
 | `w` | Show weak returns |
+| `e` | Export a Lambert chart of the view |
 | `?` | Keys sheet |
 | `Esc` | Close |
 
 Measured returns under 5 dBZ (insects, birds, ground clutter on a clear day)
 are hidden by default and the legend says so; `w` shows them.
+
+`e` exports a Lambert conformal conic chart of the view — reflectivity,
+geography, and range rings — to `~/.local/share/omastorm/reports/`. It is
+the measured sweep, not a forecast.
 
 ## Configuration
 

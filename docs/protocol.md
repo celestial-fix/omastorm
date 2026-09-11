@@ -237,6 +237,8 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 {"type":"set_weather","source":"openweathermap","apiKey":"…","lat":36.237,"lon":-79.979}
 {"type":"set_weather","source":"weewx","url":"http://192.168.1.8:8080/data.json"}
 {"type":"set_weather","source":""}
+{"type":"export_report","west":-98.0,"south":34.5,"east":-96.5,"north":36.2,
+ "layers":["ref","basemap","rings"],"width":1280}
 ```
 
 - `select_site` names a station from `hello.sites`. The engine goes
@@ -316,6 +318,24 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   only. Status is `queued` / `running` / `ok` / `failed` / `missing_docker`.
   Working files stay under `$XDG_CACHE_HOME/omastorm/wrf/`. Raw wrfout
   stays there; it is not a protocol texture.
+- `export_report` rasterizes a Lambert conformal conic chart of the
+  geographic box and writes a PNG under `$XDG_DATA_HOME/omastorm/reports/`
+  (default `~/.local/share/omastorm/reports/`). `layers` is the set to draw;
+  this build understands `ref` (also `storms`: lowest-cut reflectivity),
+  `basemap` (Natural Earth), and `rings` (50 / 100 / 150 km). Pressure, winds,
+  other altitudes, and model fields are not products of this build and are
+  answered with an `error` naming those three. `width` is optional, 480–2048,
+  default 1280. The box must have `south < north` and `west < east` on the
+  globe, and stay within 40° of latitude and 60° of longitude. The answer is
+  `report_ready` to the sender only; `state` does not change. `path` is
+  `reports/<file>` relative to `$XDG_DATA_HOME/omastorm/`. A station with no
+  sweep yet is an `error`.
+
+```json
+{"type":"report_ready","v":1,"path":"reports/KTLX-20130520T201643Z-e0-lcc-r1.png",
+ "projection":"lcc","layers":["ref","basemap","rings"],
+ "west":-98.0,"south":34.5,"east":-96.5,"north":36.2,"width":1280,"height":980}
+```
 - `step` moves `delta` entries along `timeline` from the frame shown, stopping
   at the ends; `seek` shows the entry with `id`. Both stop playback. A stepped
   frame's textures are republished under new `tex/` paths with the frame's
