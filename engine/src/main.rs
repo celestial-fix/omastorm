@@ -1,16 +1,26 @@
+mod aviation;
 mod catalog;
+mod chile;
+mod countries;
+mod fields;
+mod gramet;
+mod history;
+mod lcc;
 mod live;
 mod osm;
 mod protocol;
+mod report;
 mod sweep;
 mod tiles;
+mod weather;
+mod wrf;
 
 use catalog::Entry;
 use chrono::{DateTime, Utc};
 use protocol::{
     Basemap, Command, Connection, ConnectionStatus, Frame, FrameStatus, Geometry, Handshake, Hello,
-    Message, NaturalEarth, Places, Rejection, SiteSelection, SiteTable, Source, State, Station,
-    TileReady, TimelineEntry, VERSION, is_texture_path,
+    Message, NaturalEarth, Places, Rejection, ReportReady, SiteSelection, SiteTable, Source, State,
+    Station, TileReady, TimelineEntry, VERSION, is_texture_path,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -71,6 +81,10 @@ const PLAY_STEP_MAX: Duration = Duration::from_millis(1000);
 /// of the distance between two stations on either side of their midpoint.
 const HANDOFF_RATIO: f64 = 0.8;
 const HANDOFF_MARGIN_KM: f64 = 1.0;
+/// Nominal reflectivity footprint. Following will not select a station
+/// farther than this from the view centre, so Santiago does not inherit
+/// a Caribbean or CONUS sweep.
+const RADAR_REACH_KM: f64 = 460.0;
 
 /// Fingerprint of the running executable, set once in `main`.
 static BUILD: OnceLock<String> = OnceLock::new();
@@ -348,6 +362,10 @@ fn live_frame(template: &Frame, station: &Station, sweep: &sweep::Sweep, complet
         },
         palette: template.palette.clone(),
         bounds: template.bounds.clone(),
+        kind: String::new(),
+        altitude_hpa: 0,
+        altitude_name: String::new(),
+        layer_source: String::new(),
     }
 }
 /// The frame shown while a station's first live sweep loads and nothing is
@@ -378,6 +396,10 @@ fn empty_frame(template: &Frame, station: &Station) -> Frame {
         },
         palette: template.palette.clone(),
         bounds: template.bounds.clone(),
+        kind: String::new(),
+        altitude_hpa: 0,
+        altitude_name: String::new(),
+        layer_source: String::new(),
     }
 }
 /// The frame a lean daemon starts on before any `select_site`: the loading
@@ -420,27 +442,39 @@ fn great_circle_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     2.0 * 6371.0 * h.clamp(0.0, 1.0).sqrt().asin()
 }
 /// The station following should hand off to when the view centre settles
-/// at `lat`, `lon`: the nearest table station, when it is not `current` and
-/// beats it by the hysteresis rule. `None` keeps the current station, so a
-/// centre between two stations does not flap. Nothing about the camera is
-/// decided here: the centre is the user's.
+/// at `lat`, `lon`: the nearest table station inside `RADAR_REACH_KM`, when
+/// it is not `current` and beats it by the hysteresis rule. `None` keeps
+/// the current station when one is still in reach, so a centre between two
+/// stations does not flap. Nothing about the camera is decided here: the
+/// centre is the user's.
 fn handoff<'a>(sites: &'a [Station], current: &str, lat: f64, lon: f64) -> Option<&'a Station> {
     let distance = |s: &Station| great_circle_km(lat, lon, s.lat, s.lon);
     let nearest = sites
         .iter()
         .min_by(|a, b| distance(a).total_cmp(&distance(b)))?;
+    if distance(nearest) > RADAR_REACH_KM {
+        return None;
+    }
     if nearest.id == current {
         return None;
     }
     match sites.iter().find(|s| s.id == current) {
         Some(held)
-            if distance(nearest) >= HANDOFF_RATIO * distance(held)
-                || distance(held) - distance(nearest) < HANDOFF_MARGIN_KM =>
+            if distance(held) <= RADAR_REACH_KM
+                && (distance(nearest) >= HANDOFF_RATIO * distance(held)
+                    || distance(held) - distance(nearest) < HANDOFF_MARGIN_KM) =>
         {
             None
         }
         _ => Some(nearest),
     }
+}
+
+fn nearest_site(sites: &[Station], lat: f64, lon: f64) -> Option<(&Station, f64)> {
+    sites
+        .iter()
+        .map(|s| (s, great_circle_km(lat, lon, s.lat, s.lon)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 fn initial_state(
     frame: Frame,
@@ -474,7 +508,12 @@ fn initial_state(
             },
             osm,
         },
+        aviation: aviation::Client::idle(),
+        layers: fields::layers(),
+        wrf: wrf::idle(),
+        history: history::idle(),
         playing: false,
+        weather: None,
     }
 }
 fn line(message: &Message) -> String {
@@ -527,6 +566,25 @@ struct Shared {
     /// The last `state` line sent, so a tick that changed nothing is not
     /// re-sent.
     last_broadcast: String,
+    aviation: Arc<aviation::Client>,
+    /// Last settled view centre waiting for a briefing, live only.
+    aviation_center: Option<(f64, f64)>,
+    /// Pinned ICAO from `set_aviation`; when set, pans do not replace METAR/TAF.
+    aviation_icao: Option<String>,
+    /// Live briefing is off until `set_aviation` `enabled` is true.
+    aviation_enabled: bool,
+    aviation_wake: Arc<Notify>,
+    field_center: Option<(f64, f64)>,
+    field_source: String,
+    field_sel: Option<(String, String, u32)>,
+    field_wake: Arc<Notify>,
+    wrf_wake: Arc<Notify>,
+    gramet_req: Option<gramet::Request>,
+    gramet_wake: Arc<Notify>,
+    history_wake: Arc<Notify>,
+    /// The current-conditions request; the key lives here, not in `state`.
+    weather_request: Option<weather::Request>,
+    weather_wake: Arc<Notify>,
 }
 impl Shared {
     fn snapshot(&mut self) -> String {
@@ -677,8 +735,10 @@ impl Shared {
     /// A pan settled with the map centred at `lat`, `lon`. While following and
     /// not locked, the nearest station takes over when it beats the current
     /// one by the hysteresis rule (`handoff`); the switch is a `select_site`,
-    /// so an uncached station opens on the loading view. Locked, or with
-    /// following off, the centre is noted for nothing.
+    /// so an uncached station opens on the loading view. A centre farther
+    /// than `RADAR_REACH_KM` from every table station leaves the sweep
+    /// rather than drawing a distant one. Locked, or with following off, the
+    /// radar is left alone. Live mode always notes the centre for aviation.
     fn view_center(&mut self, lat: f64, lon: f64) -> (bool, Option<String>) {
         if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
             return (
@@ -686,15 +746,392 @@ impl Shared {
                 Some("view_center needs lat in [-90, 90] and lon in [-180, 180].".into()),
             );
         }
+        let briefed = self.request_aviation(lat, lon);
+        let fielded = self.request_field(lat, lon);
         if !self.state.site.follow || self.state.site.locked {
-            return (false, None);
+            return (
+                self.retarget_empty_site(lat, lon) || briefed || fielded,
+                None,
+            );
+        }
+        let in_reach = nearest_site(&self.sites, lat, lon)
+            .is_some_and(|(_, distance)| distance <= RADAR_REACH_KM);
+        if !in_reach {
+            if self.state.source == Source::Live {
+                return (self.leave_coverage(lat, lon) || briefed || fielded, None);
+            }
+            return (briefed || fielded, None);
         }
         match handoff(&self.sites, &self.state.site.id, lat, lon) {
             Some(station) => {
                 let id = station.id.clone();
-                self.select_site(&id)
+                let (changed, rejection) = self.select_site(&id);
+                (changed || briefed || fielded, rejection)
             }
-            None => (false, None),
+            None => (briefed || fielded, None),
+        }
+    }
+    fn request_aviation(&mut self, lat: f64, lon: f64) -> bool {
+        if self.state.source != Source::Live {
+            return false;
+        }
+        self.aviation_center = Some((lat, lon));
+        if !self.aviation_enabled {
+            return false;
+        }
+        if self.aviation_icao.is_some() {
+            return false;
+        }
+        if !self.aviation.should_refresh(lat, lon) {
+            return false;
+        }
+        if self.state.aviation.status == protocol::AviationStatus::Idle {
+            let gramet = self.state.aviation.gramet.clone();
+            self.state.aviation = aviation::Client::loading();
+            self.state.aviation.gramet = gramet;
+            self.aviation_wake.notify_one();
+            return true;
+        }
+        self.aviation_wake.notify_one();
+        false
+    }
+    fn set_aviation(&mut self, enabled: bool, icao: &str) -> (bool, Option<String>) {
+        let pin = match aviation::parse_icao(icao) {
+            Ok(pin) => pin,
+            Err(message) => return (false, Some(message)),
+        };
+        if self.state.source != Source::Live {
+            return (
+                false,
+                Some("Aviation briefing is available in live mode.".into()),
+            );
+        }
+        if !enabled {
+            self.aviation_enabled = false;
+            self.aviation_icao = None;
+            self.aviation.forget();
+            let gramet = self.state.aviation.gramet.clone();
+            self.state.aviation = aviation::Client::idle();
+            self.state.aviation.gramet = gramet;
+            return (true, None);
+        }
+        self.aviation_enabled = true;
+        self.aviation.forget();
+        match pin {
+            None => {
+                self.aviation_icao = None;
+                if let Some((lat, lon)) = self.aviation_center {
+                    let _ = self.request_aviation(lat, lon);
+                    if self.state.aviation.status == protocol::AviationStatus::Idle {
+                        let gramet = self.state.aviation.gramet.clone();
+                        self.state.aviation = aviation::Client::loading();
+                        self.state.aviation.gramet = gramet;
+                        self.aviation_wake.notify_one();
+                    }
+                    (true, None)
+                } else {
+                    let gramet = self.state.aviation.gramet.clone();
+                    self.state.aviation = aviation::Client::loading();
+                    self.state.aviation.gramet = gramet;
+                    (true, None)
+                }
+            }
+            Some(id) => {
+                self.aviation_icao = Some(id.clone());
+                let gramet = self.state.aviation.gramet.clone();
+                self.state.aviation = aviation::Client::loading_station(&id);
+                self.state.aviation.gramet = gramet;
+                self.aviation_wake.notify_one();
+                (true, None)
+            }
+        }
+    }
+    fn request_field(&mut self, lat: f64, lon: f64) -> bool {
+        if self.state.source != Source::Live || self.field_sel.is_none() {
+            return false;
+        }
+        self.field_center = Some((lat, lon));
+        if fields::is_history(&self.field_source) {
+            self.history_wake.notify_one();
+            return false;
+        }
+        self.field_wake.notify_one();
+        false
+    }
+    fn set_layer(&mut self, product: &str, elevation_index: u32) -> (bool, Option<String>) {
+        if product == "REF" {
+            if elevation_index != 0 {
+                return (
+                    false,
+                    Some(
+                        "Only reflectivity at elevation index 0 is available in this build.".into(),
+                    ),
+                );
+            }
+            let was_field = self.field_sel.take().is_some();
+            self.field_source = "nexrad".into();
+            if !was_field && self.state.frame.product == "REF" {
+                return (false, None);
+            }
+            if let Some(index) = self.timeline.position()
+                && let Err(e) = self.show_position(index)
+            {
+                eprintln!("Restoring reflectivity: {e}");
+            }
+            return (true, None);
+        }
+        if !fields::is_field(product) {
+            return (
+                false,
+                Some(format!(
+                    "Unknown product {product}; layers are listed in state.layers."
+                )),
+            );
+        }
+        if fields::altitude(elevation_index).is_none() {
+            return (
+                false,
+                Some(format!(
+                    "Unknown altitude index {elevation_index} for {product}."
+                )),
+            );
+        }
+        if self.state.source != Source::Live {
+            return (
+                false,
+                Some("Field layers are available in live mode.".into()),
+            );
+        }
+        if self.field_source == "nexrad" || self.field_source.is_empty() {
+            self.field_source = "now".into();
+        }
+        if self.field_source == "wrf" && self.state.wrf.status != protocol::WrfStatus::Ok {
+            return (
+                false,
+                Some(
+                    "WRF has no finished grid yet. Check the time estimate, then run a local forecast.".into(),
+                ),
+            );
+        }
+        self.field_sel = Some((
+            self.field_source.clone(),
+            product.to_owned(),
+            elevation_index,
+        ));
+        if self.field_center.is_none() {
+            self.field_center = Some((self.state.frame.site.lat, self.state.frame.site.lon));
+        }
+        if fields::is_history(&self.field_source) {
+            let time = if self.state.history.time.is_empty() {
+                history::default_time(&self.field_source)
+            } else {
+                self.state.history.time.clone()
+            };
+            self.state.history = history::loading(&self.field_source, &time);
+            self.history_wake.notify_one();
+            return (true, None);
+        }
+        self.field_wake.notify_one();
+        (false, None)
+    }
+    fn set_source(&mut self, source: &str) -> (bool, Option<String>) {
+        let Some(spec) = fields::source(source) else {
+            return (
+                false,
+                Some(format!(
+                    "Unknown source {source}; sources are listed in state.layers."
+                )),
+            );
+        };
+        match spec.kind {
+            "sweep" => self.set_layer("REF", 0),
+            "local" => {
+                self.field_source = spec.id.into();
+                let est = self.state.wrf.estimate.clone();
+                self.state.wrf.message = est.summary.clone();
+                (true, None)
+            }
+            "archive" => {
+                if self.state.source != Source::Live {
+                    return (
+                        false,
+                        Some("CDO and Meteostat records are available in live mode.".into()),
+                    );
+                }
+                self.field_source = spec.id.into();
+                let time = history::default_time(spec.id);
+                self.state.history = history::loading(spec.id, &time);
+                let product = match &self.field_sel {
+                    Some((_, product, _)) if product == "TEMP" || product == "PRECIP" => {
+                        product.clone()
+                    }
+                    _ => "TEMP".into(),
+                };
+                self.set_layer(&product, 0)
+            }
+            _ if fields::is_model(spec.id) => {
+                if self.state.source != Source::Live {
+                    return (
+                        false,
+                        Some("Model field sources are available in live mode.".into()),
+                    );
+                }
+                self.field_source = spec.id.into();
+                let (product, alt) = match &self.field_sel {
+                    Some((_, product, alt)) => (product.clone(), *alt),
+                    None => ("WIND".into(), 0),
+                };
+                self.set_layer(&product, alt)
+            }
+            _ => (
+                false,
+                Some(format!(
+                    "Unknown source {source}; sources are listed in state.layers."
+                )),
+            ),
+        }
+    }
+    fn estimate_wrf(&mut self, lat: f64, lon: f64, params: wrf::Params) -> (bool, Option<String>) {
+        if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+            return (
+                false,
+                Some("WRF estimate needs a latitude in ±90 and a longitude in ±180.".into()),
+            );
+        }
+        let next = wrf::preview(
+            lat,
+            lon,
+            params.width_km,
+            params.hours,
+            params.cores,
+            params.dx_km,
+        );
+        let changed = set(&mut self.state.wrf, next);
+        (changed, None)
+    }
+    fn run_wrf(&mut self, lat: f64, lon: f64, params: wrf::Params) -> (bool, Option<String>) {
+        if self.state.source != Source::Live {
+            return (
+                false,
+                Some("Local WRF forecasts are available in live mode.".into()),
+            );
+        }
+        if matches!(
+            self.state.wrf.status,
+            protocol::WrfStatus::Queued | protocol::WrfStatus::Running
+        ) {
+            return (false, Some("A WRF run is already in progress.".into()));
+        }
+        let (changed, rejection) = self.estimate_wrf(lat, lon, params);
+        if rejection.is_some() {
+            return (changed, rejection);
+        }
+        if wrf::script_path().is_none() {
+            self.state.wrf.status = protocol::WrfStatus::Failed;
+            self.state.wrf.message =
+                "WRF producer script is not installed in this checkout.".into();
+            return (true, None);
+        }
+        let image = wrf::default_image();
+        self.state.wrf.image = image;
+        self.state.wrf.status = protocol::WrfStatus::Queued;
+        self.state.wrf.message = format!("Queued. {}", self.state.wrf.estimate.summary);
+        self.field_source = "wrf".into();
+        // The script is started from the command handler after broadcast so
+        // the UI sees the estimate before Docker work begins.
+        (true, None)
+    }
+    fn set_gramet(
+        &mut self,
+        origin: &str,
+        destination: &str,
+        cruise_kt: u32,
+        flight_level: u32,
+    ) -> (bool, Option<String>) {
+        if self.state.source != Source::Live {
+            return (false, Some("GRAMET is available in live mode.".into()));
+        }
+        let request = match gramet::parse_request(origin, destination, cruise_kt, flight_level) {
+            Ok(request) => request,
+            Err(message) => return (false, Some(message)),
+        };
+        self.gramet_req = Some(request.clone());
+        self.state.aviation.gramet = gramet::loading(&request);
+        self.gramet_wake.notify_one();
+        (true, None)
+    }
+    fn seek_history(&mut self, time: &str) -> (bool, Option<String>) {
+        if !fields::is_history(&self.field_source) {
+            return (
+                false,
+                Some("History seek needs the CDO or Meteostat source.".into()),
+            );
+        }
+        if self.state.source != Source::Live {
+            return (
+                false,
+                Some("CDO and Meteostat records are available in live mode.".into()),
+            );
+        }
+        let time = history::normalize_time(&self.field_source, time);
+        self.state.history = history::loading(&self.field_source, &time);
+        self.history_wake.notify_one();
+        (true, None)
+    }
+    fn step_history(&mut self, delta: i64) -> (bool, Option<String>) {
+        if !fields::is_history(&self.field_source) {
+            return (
+                false,
+                Some("History step needs the CDO or Meteostat source.".into()),
+            );
+        }
+        let time = if self.state.history.time.is_empty() {
+            history::default_time(&self.field_source)
+        } else {
+            self.state.history.time.clone()
+        };
+        match history::step_time(&self.field_source, &time, delta) {
+            Ok(next) => self.seek_history(&next),
+            Err(message) => (false, Some(message)),
+        }
+    }
+    /// Keep an empty-station placeholder sited on the view so map scale
+    /// follows the place the user chose, not the CONUS centroid.
+    fn retarget_empty_site(&mut self, lat: f64, lon: f64) -> bool {
+        if !self.state.site.id.is_empty() {
+            return false;
+        }
+        let site = &self.state.frame.site;
+        if great_circle_km(site.lat, site.lon, lat, lon) < 1.0 {
+            return false;
+        }
+        self.state.frame.site.lat = lat;
+        self.state.frame.site.lon = lon;
+        true
+    }
+    fn leave_coverage(&mut self, lat: f64, lon: f64) -> bool {
+        if self.state.site.id.is_empty() {
+            return self.retarget_empty_site(lat, lon);
+        }
+        if let Some(task) = self.live.take() {
+            task.abort();
+        }
+        self.timeline = Timeline::new(Vec::new());
+        self.pending = None;
+        self.frame_ms = None;
+        self.state.playing = false;
+        self.state.site.id.clear();
+        self.state.source = Source::Live;
+        self.state.connection.status = ConnectionStatus::Loading;
+        let mut frame = startup_frame(&self.template);
+        frame.site.lat = lat;
+        frame.site.lon = lon;
+        match blank_textures(&frame).and_then(|(texture, lut)| self.show(frame, &texture, &lut)) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("Leaving radar coverage: {e}");
+                true
+            }
         }
     }
     /// A live sweep for the selected station grew or completed: it joins the
@@ -721,7 +1158,7 @@ impl Shared {
             }
             return Ok(());
         }
-        let following = self.timeline.following();
+        let following = self.timeline.following() && self.field_sel.is_none();
         self.state.connection.status = ConnectionStatus::Ok;
         let shown = if complete {
             self.frame_ms = Some(start_ms);
@@ -758,7 +1195,7 @@ impl Shared {
         if self.frame_ms.is_none_or(|ms| entry.start_ms > ms) {
             self.frame_ms = Some(entry.start_ms);
         }
-        let shown = if self.timeline.insert(entry) {
+        let shown = if self.timeline.insert(entry) && self.field_sel.is_none() {
             self.show_position(0)
         } else {
             Ok(())
@@ -781,6 +1218,7 @@ impl Shared {
         let Some(index) = target else {
             return (paused, None);
         };
+        self.field_sel = None;
         match self.show_position(index) {
             Ok(()) => (true, None),
             Err(e) => {
@@ -795,6 +1233,7 @@ impl Shared {
     }
     /// Start playback when there is something to loop over.
     fn play(&mut self) -> bool {
+        self.field_sel = None;
         if self.state.playing || self.timeline.stored.len() < 2 {
             return false;
         }
@@ -833,6 +1272,36 @@ impl Shared {
             self.broadcast();
         }
     }
+    fn set_weather(
+        &mut self,
+        source: &str,
+        api_key: &str,
+        url: &str,
+        lat: Option<f64>,
+        lon: Option<f64>,
+    ) -> (bool, Option<String>) {
+        match weather::parse_request(source, api_key, url, lat, lon) {
+            Err(message) => (false, Some(message)),
+            Ok(None) => {
+                let changed = self.weather_request.is_some() || self.state.weather.is_some();
+                self.weather_request = None;
+                self.state.weather = None;
+                if changed {
+                    self.weather_wake.notify_one();
+                }
+                (changed, None)
+            }
+            Ok(Some(request)) => {
+                if self.weather_request.as_ref() == Some(&request) {
+                    return (false, None);
+                }
+                self.state.weather = Some(weather::loading(&request));
+                self.weather_request = Some(request);
+                self.weather_wake.notify_one();
+                (true, None)
+            }
+        }
+    }
     /// A well-formed command from a client; the reader has already logged
     /// `Unsupported` ones by name. Broadcasts if anything changed and returns
     /// the message for the sender when the command could not be carried out;
@@ -853,14 +1322,72 @@ impl Shared {
             Command::Pause => (set(&mut self.state.playing, false), None),
             Command::SetProduct {
                 product,
-                elevation_index: 0,
-            } if product == self.state.frame.product => (false, None),
-            Command::SetProduct { .. } => (
-                false,
-                Some("Only reflectivity at elevation index 0 is available in this build.".into()),
-            ),
-            // Tile requests and place search are answered to the sender, not state.
-            Command::TilesNeeded { .. } | Command::SearchPlaces { .. } | Command::Unsupported => {
+                elevation_index,
+            } => self.set_layer(&product, elevation_index),
+            Command::SetSource { source } => self.set_source(&source),
+            Command::EstimateWrf {
+                lat,
+                lon,
+                width_km,
+                height_km,
+                dx_km,
+                hours,
+                cores,
+            } => {
+                let params = wrf::Params::from_command(
+                    width_km,
+                    height_km,
+                    dx_km,
+                    hours,
+                    cores,
+                    f64::from(self.state.wrf.estimate.width_km),
+                );
+                self.estimate_wrf(lat, lon, params)
+            }
+            Command::RunWrf {
+                lat,
+                lon,
+                width_km,
+                height_km,
+                dx_km,
+                hours,
+                cores,
+            } => {
+                let params = wrf::Params::from_command(
+                    width_km,
+                    height_km,
+                    dx_km,
+                    hours,
+                    cores,
+                    f64::from(self.state.wrf.estimate.width_km),
+                );
+                let result = self.run_wrf(lat, lon, params);
+                if self.state.wrf.status == protocol::WrfStatus::Queued {
+                    self.wrf_wake.notify_one();
+                }
+                result
+            }
+            Command::SetGramet {
+                origin,
+                destination,
+                cruise_kt,
+                flight_level,
+            } => self.set_gramet(&origin, &destination, cruise_kt, flight_level),
+            Command::SetAviation { enabled, icao } => self.set_aviation(enabled, &icao),
+            Command::SeekHistory { time } => self.seek_history(&time),
+            Command::StepHistory { delta } => self.step_history(delta),
+            Command::SetWeather {
+                source,
+                api_key,
+                url,
+                lat,
+                lon,
+            } => self.set_weather(&source, &api_key, &url, lat, lon),
+            // Tile requests, place search, and chart export are answered to the sender, not state.
+            Command::TilesNeeded { .. }
+            | Command::SearchPlaces { .. }
+            | Command::ExportReport { .. }
+            | Command::Unsupported => {
                 return None;
             }
         };
@@ -948,6 +1475,261 @@ fn decode_and_publish(dir: &Path, template: &Frame, archive: &[u8]) -> io::Resul
         started.elapsed()
     );
     Ok((frame, sweep.start_ms))
+}
+/// Fetch the aviation briefing for a pinned ICAO or the last settled view
+/// centre. Archived daemons never wake this path; live `view_center` and
+/// `set_aviation` do.
+async fn aviation_loop(
+    shared: Arc<Mutex<Shared>>,
+    client: Arc<aviation::Client>,
+    wake: Arc<Notify>,
+) {
+    loop {
+        wake.notified().await;
+        sleep(Duration::from_millis(250)).await;
+        let (icao, center, live, enabled) = {
+            let shared = shared.lock().unwrap();
+            (
+                shared.aviation_icao.clone(),
+                shared.aviation_center,
+                shared.state.source == Source::Live,
+                shared.aviation_enabled,
+            )
+        };
+        if !live || !enabled {
+            continue;
+        }
+        let briefing = if let Some(icao) = icao.clone() {
+            client.fetch_station(&icao).await
+        } else {
+            let Some((lat, lon)) = center else {
+                continue;
+            };
+            if !client.should_refresh(lat, lon) {
+                continue;
+            }
+            {
+                let mut shared = shared.lock().unwrap();
+                if shared.state.aviation.status == protocol::AviationStatus::Idle {
+                    shared.state.aviation.status = protocol::AviationStatus::Loading;
+                    shared.broadcast();
+                }
+            }
+            client.fetch(lat, lon).await
+        };
+        let mut shared = shared.lock().unwrap();
+        if shared.state.source != Source::Live {
+            continue;
+        }
+        if shared.aviation_icao != icao {
+            continue;
+        }
+        let mut briefing = briefing;
+        briefing.gramet = shared.state.aviation.gramet.clone();
+        if !shared.aviation_enabled {
+            continue;
+        }
+        if set(&mut shared.state.aviation, briefing) {
+            shared.broadcast();
+        }
+    }
+}
+async fn field_loop(shared: Arc<Mutex<Shared>>, client: Arc<fields::Client>, wake: Arc<Notify>) {
+    loop {
+        wake.notified().await;
+        sleep(Duration::from_millis(250)).await;
+        let (center, sel) = {
+            let shared = shared.lock().unwrap();
+            if shared.state.source != Source::Live {
+                continue;
+            }
+            match (shared.field_center, shared.field_sel.clone()) {
+                (Some(center), Some(sel)) if sel.0 != "wrf" && !fields::is_history(&sel.0) => {
+                    (center, sel)
+                }
+                _ => continue,
+            }
+        };
+        match client
+            .fetch(center.0, center.1, &sel.0, &sel.1, sel.2)
+            .await
+        {
+            Ok((frame, texture, lut)) => {
+                let mut shared = shared.lock().unwrap();
+                if shared.field_sel.as_ref() != Some(&sel) || shared.state.source != Source::Live {
+                    continue;
+                }
+                if let Err(e) = shared.show(frame, &texture, &lut) {
+                    eprintln!("Field layer: {e}");
+                    continue;
+                }
+                shared.broadcast();
+            }
+            Err(e) => eprintln!("Field layer: {e}"),
+        }
+    }
+}
+async fn wrf_loop(shared: Arc<Mutex<Shared>>, wake: Arc<Notify>) {
+    loop {
+        wake.notified().await;
+        let job = {
+            let mut shared = shared.lock().unwrap();
+            if shared.state.source != Source::Live
+                || shared.state.wrf.status != protocol::WrfStatus::Queued
+            {
+                continue;
+            }
+            shared.state.wrf.status = protocol::WrfStatus::Running;
+            shared.state.wrf.message = format!("Running. {}", shared.state.wrf.estimate.summary);
+            shared.broadcast();
+            (
+                shared.state.wrf.lat,
+                shared.state.wrf.lon,
+                shared.state.wrf.estimate.clone(),
+                shared.state.wrf.image.clone(),
+            )
+        };
+        let outcome = spawn_blocking(move || execute_wrf(job.0, job.1, &job.2, &job.3)).await;
+        let mut shared = shared.lock().unwrap();
+        match outcome {
+            Ok(Ok(())) => {
+                shared.state.wrf.status = protocol::WrfStatus::Ok;
+                shared.state.wrf.message =
+                    format!("Finished. {}", shared.state.wrf.estimate.summary);
+            }
+            Ok(Err(e)) => {
+                let text = e.to_string();
+                shared.state.wrf.status = if text.contains("docker") {
+                    protocol::WrfStatus::MissingDocker
+                } else {
+                    protocol::WrfStatus::Failed
+                };
+                shared.state.wrf.message = text;
+            }
+            Err(e) => {
+                shared.state.wrf.status = protocol::WrfStatus::Failed;
+                shared.state.wrf.message = e.to_string();
+            }
+        }
+        shared.broadcast();
+    }
+}
+async fn gramet_loop(shared: Arc<Mutex<Shared>>, client: Arc<gramet::Client>, wake: Arc<Notify>) {
+    loop {
+        wake.notified().await;
+        sleep(Duration::from_millis(250)).await;
+        let request = {
+            let shared = shared.lock().unwrap();
+            if shared.state.source != Source::Live {
+                continue;
+            }
+            match shared.gramet_req.clone() {
+                Some(request) => request,
+                None => continue,
+            }
+        };
+        let gramet = client.fetch(&request).await;
+        let mut shared = shared.lock().unwrap();
+        if shared.gramet_req.as_ref() != Some(&request) || shared.state.source != Source::Live {
+            continue;
+        }
+        if set(&mut shared.state.aviation.gramet, gramet) {
+            shared.broadcast();
+        }
+    }
+}
+async fn history_loop(shared: Arc<Mutex<Shared>>, client: Arc<history::Client>, wake: Arc<Notify>) {
+    loop {
+        wake.notified().await;
+        sleep(Duration::from_millis(250)).await;
+        let (center, source, time, product) = {
+            let shared = shared.lock().unwrap();
+            if shared.state.source != Source::Live || !fields::is_history(&shared.field_source) {
+                continue;
+            }
+            let Some(center) = shared.field_center else {
+                continue;
+            };
+            let product = shared
+                .field_sel
+                .as_ref()
+                .map(|sel| sel.1.clone())
+                .unwrap_or_else(|| "TEMP".into());
+            let time = if shared.state.history.time.is_empty() {
+                history::default_time(&shared.field_source)
+            } else {
+                shared.state.history.time.clone()
+            };
+            (center, shared.field_source.clone(), time, product)
+        };
+        match client
+            .fetch(center.0, center.1, &source, &time, &product)
+            .await
+        {
+            Ok((briefing, frame, texture, lut)) => {
+                let mut shared = shared.lock().unwrap();
+                if shared.field_source != source || shared.state.source != Source::Live {
+                    continue;
+                }
+                if set(&mut shared.state.history, briefing)
+                    && let Err(e) = shared.show(frame, &texture, &lut)
+                {
+                    eprintln!("History layer: {e}");
+                }
+                shared.broadcast();
+            }
+            Err(e) => {
+                let mut shared = shared.lock().unwrap();
+                shared.state.history.status = protocol::AviationStatus::Offline;
+                shared.state.history.message = e.to_string();
+                shared.broadcast();
+                eprintln!("History layer: {e}");
+            }
+        }
+    }
+}
+
+fn execute_wrf(
+    lat: f64,
+    lon: f64,
+    estimate: &protocol::WrfEstimate,
+    image: &str,
+) -> io::Result<()> {
+    let script = wrf::script_path().ok_or_else(|| io::Error::other("WRF script missing"))?;
+    let dir = wrf::cache_dir();
+    fs::create_dir_all(&dir)?;
+    let status = Process::new(script)
+        .arg("--lat")
+        .arg(format!("{lat:.4}"))
+        .arg("--lon")
+        .arg(format!("{lon:.4}"))
+        .arg("--width-km")
+        .arg(estimate.width_km.to_string())
+        .arg("--height-km")
+        .arg(estimate.height_km.to_string())
+        .arg("--dx-km")
+        .arg(estimate.dx_km.to_string())
+        .arg("--hours")
+        .arg(estimate.hours.to_string())
+        .arg("--cores")
+        .arg(estimate.cores.to_string())
+        .arg("--nx")
+        .arg(estimate.nx.to_string())
+        .arg("--ny")
+        .arg(estimate.ny.to_string())
+        .arg("--dir")
+        .arg(&dir)
+        .env("OMASTORM_WRF_IMAGE", image)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "WRF producer exited {}",
+            status.code().unwrap_or(-1)
+        )));
+    }
+    Ok(())
 }
 /// Turn the pollers' events into frames: encode on the blocking pool and
 /// record complete frames in the catalog, then hand the frame to the
@@ -1097,6 +1879,52 @@ fn report(shared: &Mutex<Shared>, site: &str, reason: &str, condition: Connectio
         shared.broadcast();
     }
 }
+/// Current conditions for the configured weather source. The key stays in
+/// `Shared`; only the observation is broadcast.
+async fn weather_poll(shared: Arc<Mutex<Shared>>, wake: Arc<Notify>) {
+    let client = match weather::client() {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("Weather client: {e}");
+            return;
+        }
+    };
+    loop {
+        let request = shared.lock().unwrap().weather_request.clone();
+        let Some(request) = request else {
+            wake.notified().await;
+            continue;
+        };
+        let interval = request.poll_every();
+        match weather::fetch(&client, &request).await {
+            Ok(observation) => {
+                let mut shared = shared.lock().unwrap();
+                if shared.weather_request.as_ref() != Some(&request) {
+                    continue;
+                }
+                if set(&mut shared.state.weather, Some(observation)) {
+                    shared.broadcast();
+                }
+            }
+            Err(e) => {
+                let mut shared = shared.lock().unwrap();
+                if shared.weather_request.as_ref() != Some(&request) {
+                    continue;
+                }
+                let Some(weather) = shared.state.weather.as_mut() else {
+                    continue;
+                };
+                let changed = weather.status != e.status || weather.message != e.message;
+                weather.status = e.status;
+                weather.message.clone_from(&e.message);
+                if changed {
+                    shared.broadcast();
+                }
+            }
+        }
+        let _ = timeout(interval, wake.notified()).await;
+    }
+}
 /// Playback: woken by `play`, it advances the timeline one frame per
 /// `PLAY_INTERVAL` until `playing` is cleared, then waits for the next wake.
 async fn player(shared: Arc<Mutex<Shared>>, wake: Arc<Notify>) {
@@ -1190,6 +2018,94 @@ fn cleanup(dir: &Path, shared: &Mutex<Shared>, retirement: &mut Retirement) -> i
     }
     Ok(())
 }
+/// Validate `export_report`, snapshot the current sweep, and raster the
+/// chart on the blocking pool. The answer goes only to `reply`.
+fn export_report(
+    shared: &Mutex<Shared>,
+    reply: &Sender<String>,
+    request: report::Request,
+) -> Option<String> {
+    let (frame, dir) = {
+        let shared = shared.lock().unwrap();
+        (shared.state.frame.clone(), shared.dir.clone())
+    };
+    let accepted = match report::Job::validate(
+        request.west,
+        request.south,
+        request.east,
+        request.north,
+        request.layers,
+        request.width,
+        &frame,
+    ) {
+        Ok(accepted) => accepted,
+        Err(message) => return Some(message),
+    };
+    let west = accepted.west;
+    let south = accepted.south;
+    let east = accepted.east;
+    let north = accepted.north;
+    let texture = match fs::read(dir.join(&frame.texture)) {
+        Ok(bytes) => bytes,
+        Err(e) => return Some(format!("Cannot read the sweep texture: {e}.")),
+    };
+    let lut = match fs::read(dir.join(&frame.azimuth_lut)) {
+        Ok(bytes) => bytes,
+        Err(e) => return Some(format!("Cannot read the azimuth lookup: {e}.")),
+    };
+    let job = report::Job {
+        west: accepted.west,
+        south: accepted.south,
+        east: accepted.east,
+        north: accepted.north,
+        layers: accepted.layers,
+        width: accepted.width,
+        frame,
+        texture,
+        lut,
+    };
+    let reply = reply.clone();
+    tokio::spawn(async move {
+        let result = spawn_blocking(move || job.run()).await;
+        match result {
+            Ok(Ok(ready)) => {
+                let message = ReportReady {
+                    v: VERSION,
+                    path: &ready.path,
+                    projection: "lcc",
+                    layers: &ready.layers,
+                    west,
+                    south,
+                    east,
+                    north,
+                    width: ready.width,
+                    height: ready.height,
+                };
+                let _ = reply.try_send(line(&Message::ReportReady(&message)));
+            }
+            Ok(Err(e)) => {
+                let message = format!("Export failed: {e}.");
+                let rejection = Rejection {
+                    v: VERSION,
+                    command: "export_report",
+                    message: &message,
+                };
+                let _ = reply.try_send(line(&Message::Error(&rejection)));
+            }
+            Err(e) => {
+                let message = format!("Export failed: {e}.");
+                let rejection = Rejection {
+                    v: VERSION,
+                    command: "export_report",
+                    message: &message,
+                };
+                let _ = reply.try_send(line(&Message::Error(&rejection)));
+            }
+        }
+    });
+    None
+}
+
 /// One line from a client. Rejections go back on `reply`, that client's own
 /// queue, so no other client hears about a command it did not send; a tile
 /// request goes to that client's tile task on `tiles`.
@@ -1252,6 +2168,28 @@ fn receive(
                 return;
             }
         }
+        Ok(Command::ExportReport {
+            west,
+            south,
+            east,
+            north,
+            layers,
+            width,
+        }) => match export_report(
+            shared,
+            reply,
+            report::Request {
+                west,
+                south,
+                east,
+                north,
+                layers,
+                width,
+            },
+        ) {
+            None => return,
+            Some(message) => message,
+        },
         Ok(command) => match shared.lock().unwrap().apply(command) {
             Some(message) => message,
             None => return,
@@ -1567,6 +2505,16 @@ fn serve(dir: PathBuf) -> io::Result<()> {
     let catalog = Arc::new(catalog::Catalog::open(osm::cache_root()?.join("frames"))?);
     let (events, event_rx) = mpsc::channel(16);
     let wake = Arc::new(Notify::new());
+    let aviation_wake = Arc::new(Notify::new());
+    let aviation_client = Arc::new(aviation::Client::open()?);
+    let field_wake = Arc::new(Notify::new());
+    let field_client = Arc::new(fields::Client::open()?);
+    let wrf_wake = Arc::new(Notify::new());
+    let gramet_wake = Arc::new(Notify::new());
+    let gramet_client = Arc::new(gramet::Client::open()?);
+    let history_wake = Arc::new(Notify::new());
+    let history_client = Arc::new(history::Client::open()?);
+    let weather_wake = Arc::new(Notify::new());
     let shared = Arc::new(Mutex::new(Shared {
         state: initial_state(frame, osm.info(), source, status),
         tiles: tile_store,
@@ -1584,6 +2532,21 @@ fn serve(dir: PathBuf) -> io::Result<()> {
         pending: None,
         wake: wake.clone(),
         last_broadcast: String::new(),
+        aviation: aviation_client.clone(),
+        aviation_center: None,
+        aviation_icao: None,
+        aviation_enabled: false,
+        aviation_wake: aviation_wake.clone(),
+        field_center: None,
+        field_source: "nexrad".into(),
+        field_sel: None,
+        field_wake: field_wake.clone(),
+        wrf_wake: wrf_wake.clone(),
+        gramet_req: None,
+        gramet_wake: gramet_wake.clone(),
+        history_wake: history_wake.clone(),
+        weather_request: None,
+        weather_wake: weather_wake.clone(),
     }));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -1595,6 +2558,16 @@ fn serve(dir: PathBuf) -> io::Result<()> {
     let listener = UnixListener::bind(&socket)?;
     runtime.spawn(live_events(shared.clone(), event_rx));
     runtime.spawn(player(shared.clone(), wake));
+    runtime.spawn(aviation_loop(
+        shared.clone(),
+        aviation_client,
+        aviation_wake,
+    ));
+    runtime.spawn(field_loop(shared.clone(), field_client, field_wake));
+    runtime.spawn(wrf_loop(shared.clone(), wrf_wake));
+    runtime.spawn(gramet_loop(shared.clone(), gramet_client, gramet_wake));
+    runtime.spawn(history_loop(shared.clone(), history_client, history_wake));
+    runtime.spawn(weather_poll(shared.clone(), weather_wake));
     let cleanup_shared = shared.clone();
     runtime.spawn(async move {
         let mut retirement = Retirement::default();
@@ -2110,7 +3083,7 @@ mod tests {
 }
 #[cfg(test)]
 mod handoff_tests {
-    use super::{great_circle_km, handoff, site_table};
+    use super::{RADAR_REACH_KM, great_circle_km, handoff, nearest_site, site_table};
     use crate::protocol::Station;
 
     fn station(id: &str, lat: f64, lon: f64) -> Station {
@@ -2190,5 +3163,17 @@ mod handoff_tests {
             handoff(&sites, "ZZZZ", 35.333361, -97.277761).map(|s| &s.id[..]),
             Some("KTLX")
         );
+    }
+
+    #[test]
+    fn santiago_is_outside_nexrad_reach() {
+        let sites = site_table().sites;
+        let (_, distance) = nearest_site(&sites, -33.4372, -70.6506).unwrap();
+        assert!(
+            distance > RADAR_REACH_KM,
+            "nearest NEXRAD to Santiago is {distance} km"
+        );
+        assert!(handoff(&sites, "", -33.4372, -70.6506).is_none());
+        assert!(handoff(&sites, "KTLX", -33.4372, -70.6506).is_none());
     }
 }

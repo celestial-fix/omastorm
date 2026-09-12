@@ -43,8 +43,45 @@ It is small (a few KB) so clients replace rather than merge.
  "timeline":[{"id":"...","scanTime":"...","status":"complete"}],
  "basemap":{"ne":{"version":"5.2.0-pre"},"osm":{"status":"ok","source":"OpenFreeMap",
             "version":"20260830_080001_pt","attribution":"OpenFreeMap © OpenMapTiles Data from OpenStreetMap"}},
- "playing":false}
+ "aviation":{"status":"idle","attribution":"NOAA Aviation Weather Center",
+            "station":null,"metar":null,"taf":null,"hazards":[],
+            "gramet":{"status":"idle","origin":null,"destination":null,"cruiseKt":0,
+                      "flightLevel":350,"distanceKm":0,"eteMin":0,"raw":"","coords":[],
+                      "legs":[]}},
+ "layers":{"attribution":"NOAA NEXRAD · Open-Meteo","sources":[
+   {"id":"nexrad","name":"NEXRAD","kind":"sweep","group":"report","model":""},
+   {"id":"now","name":"Open-Meteo now","kind":"analysis","group":"report","model":"best_match"},
+   {"id":"gfs","name":"GFS","kind":"model","group":"forecast","model":"gfs_global"},
+   {"id":"ecmwf","name":"ECMWF IFS","kind":"model","group":"forecast","model":"ecmwf_ifs025"},
+   {"id":"wrf","name":"WRF","kind":"local","group":"forecast","model":"wrf"},
+   {"id":"cdo","name":"NOAA CDO","kind":"archive","group":"report","model":""},
+   {"id":"meteostat","name":"Meteostat","kind":"archive","group":"report","model":""}],
+  "products":[
+   {"code":"REF","name":"Reflectivity","units":"dBZ","kind":"sweep",
+    "altitudes":[{"index":0,"name":"lowest cut","hpa":0}]},
+   {"code":"WIND","name":"Wind","units":"kt","kind":"field",
+    "altitudes":[{"index":0,"name":"SFC","hpa":0},{"index":2,"name":"5 000 ft · 850 hPa","hpa":850}]}]},
+ "wrf":{"status":"idle","image":"","lat":0,"lon":0,"message":"",
+        "estimate":{"widthKm":450,"heightKm":450,"areaKm2":202500,"dxKm":9,
+                    "hours":12,"cores":4,"levels":33,"nx":51,"ny":51,"cells":2500,
+                    "dtSec":54,"steps":800,"gribFiles":5,"downloadMin":4,
+                    "preprocessMin":2,"integrateMin":40,"totalMin":46,
+                    "totalMinLow":28,"totalMinHigh":85,"memoryMb":1600,
+                    "summary":"About 28–85 min for 450×450 km at 9 km, 12 h…"}},
+ "history":{"status":"idle","source":"","time":"","step":"day",
+            "attribution":"NOAA NCEI Climate Data Online · Meteostat","stations":[]},
+ "playing":false,
+ "weather":{"source":"openweathermap","sourceName":"OpenWeatherMap","status":"ok",
+            "observedAt":"2026-09-10T16:00:00+00:00","name":"Stokesdale",
+            "temperatureC":22.1,"condition":"overcast clouds","windKmh":10.8,
+            "humidity":64,"attribution":"OpenWeatherMap"}}
 ```
+
+`weather` is omitted when the user has not chosen a source. It is one current
+observation from their API or WeeWX station, never a forecast, and never
+carries the API key. `status` is `ok`, `loading`, `stale` (observation older
+than 30 minutes), `unavailable` (the source answered but not with a usable
+observation, including a rejected key), or `offline` (unreachable).
 
 - `source`: `archived` | `live`. The daemon starts `live` with no station:
   `site.id` is empty, `connection.status` is `loading`, the frame is the
@@ -155,6 +192,41 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   read, and name OpenFreeMap by its host before that. The UI shows
   `osm.attribution` verbatim whenever an `osm` tile is on screen. It is
   shared state: a change is broadcast like any other.
+- `aviation` is off until the client sends `set_aviation` with `enabled`
+  true (the default is normal weather: no METAR/TAF fetch). When enabled
+  in live mode it briefs the last settled `view_center`, or a pinned
+  four-letter `icao`. Chilean ICAO (`SC*`) and a view over Chile take
+  METAR, TAF, NOTAM, and SIGMET only from DGAC IFIS
+  (`aipchile.dgac.gob.cl`); everywhere else uses NOAA's Aviation Weather
+  Center. Archived daemons and a live daemon that has not yet received a
+  centre stay `status` `idle`. `enabled` is omitted when false. After a
+  centre arrives, `loading` is replaced by `ok` (a METAR, TAF, or
+  hazard), `unavailable` (the feed answered and nothing was near the
+  view), or `offline` (the feed could not be read). `station` is the
+  nearest METAR (or the pin); `stations` are nearby ICAO aerodromes the
+  map marks so a hover/click can pin one. `metar` and `taf` carry `raw`
+  bulletin text and `time` (observation or issue, ISO-8601). TAF may add
+  `validFrom` / `validTo`. `hazards` are SIGMET, AIRMET, GAMET, issued
+  GRAMET, and Chilean NOTAM bulletins whose polygons intersect the view,
+  each with `kind` (`sigmet` | `airmet` | `gamet` | `gramet` | `notam`),
+  `hazard`, `raw`, and `coords` `[{lat,lon}, …]`. The UI draws those
+  polygons and ICAO markers and shows `raw` (or the ICAO id) in a themed
+  tooltip on hover. `aviation.gramet` is a separate route briefing from
+  `set_gramet` (origin and destination ICAO, cruise TAS, optional flight
+  level): `status`, airport fixes, `raw` text, an open `coords`
+  polyline, and sampled `legs`. It is not a GRIB file. Radar values still
+  never enter JSON; these are issued bulletins and route text.
+  `OMASTORM_AVIATION_URL` overrides the AWC root;
+  `OMASTORM_CHILE_URL` overrides the IFIS root (default
+  `https://aipchile.dgac.gob.cl`).
+- `history` is the CDO / Meteostat time cursor. Archived daemons and a
+  live daemon that has not selected those sources stay `status` `idle`.
+  After `set_source` `cdo` or `meteostat`, `loading` is replaced by `ok`
+  (stations in the view), `unavailable`, or `offline`. `time` is an ISO
+  date (`cdo`, one day) or hour (`meteostat`). `stations` are the
+  reports that built the field texture. `OMASTORM_CDO_URL`,
+  `OMASTORM_METEOSTAT_URL`, and `OMASTORM_METEOSTAT_STATIONS` override
+  the fetch roots.
 
 ## Client commands
 
@@ -166,7 +238,21 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 {"type":"search_places","query":"norman","lat":35.4,"lon":-97.5}
 {"type":"play"}  {"type":"pause"}  {"type":"step","delta":-1}  {"type":"seek","id":"..."}
 {"type":"set_product","product":"REF","elevationIndex":0}
+{"type":"set_source","source":"gfs"}
+{"type":"set_gramet","origin":"SCEL","destination":"SCFA","cruiseKt":420,"flightLevel":350}
+{"type":"set_aviation","enabled":true}
+{"type":"set_aviation","enabled":true,"icao":"SCEL"}
+{"type":"set_aviation","enabled":false}
+{"type":"seek_history","time":"2020-01-15"}
+{"type":"step_history","delta":-1}
+{"type":"estimate_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
+{"type":"run_wrf","lat":-33.45,"lon":-70.67,"widthKm":210,"heightKm":210}
 {"type":"tiles_needed","z":11,"x0":469,"y0":807,"x1":472,"y1":810}
+{"type":"set_weather","source":"openweathermap","apiKey":"…","lat":36.237,"lon":-79.979}
+{"type":"set_weather","source":"weewx","url":"http://192.168.1.8:8080/data.json"}
+{"type":"set_weather","source":""}
+{"type":"export_report","west":-98.0,"south":34.5,"east":-96.5,"north":36.2,
+ "layers":["ref","basemap","rings"],"width":1280}
 ```
 
 - `select_site` names a station from `hello.sites`. The engine goes
@@ -176,23 +262,34 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   nothing. An id outside the table is answered with an `error`.
 - `view_center` is sent when a pan or zoom settles and the centre moved, not
   per frame. With `follow` on and `lock` off, the engine hands off to the
-  station nearest the centre by great-circle distance when that station beats
-  the current one by the hysteresis rule (closer than 0.8 of the current
-  station's distance and by at least 1 km, so a centre between two stations
-  keeps whichever it has; the dead band is about a twentieth of the spacing
-  either side of the midpoint); the hand-off is a `select_site`, so `state`
-  is broadcast and an uncached station opens on the loading placeholder.
-  Locked or not following, or when the current station stays nearest,
-  nothing changes and nothing is sent. The engine never moves the camera:
+  station nearest the centre by great-circle distance when that station is
+  within 460 km and beats the current one by the hysteresis rule (closer
+  than 0.8 of the current station's distance and by at least 1 km, so a
+  centre between two stations keeps whichever it has; the dead band is
+  about a twentieth of the spacing either side of the midpoint); the
+  hand-off is a `select_site`, so `state` is broadcast and an uncached
+  station opens on the loading placeholder. When every table station is
+  farther than 460 km, the engine leaves the sweep and shows the map
+  without radar, sited on the view centre. Live mode notes that centre
+  for aviation; the briefing itself only fetches after `set_aviation`
+  `enabled` true. Locked or not following, the radar is left
+  alone and an enabled briefing still updates. The engine never moves the camera:
   the centre is the user's. A latitude outside ±90 or a longitude outside
   ±180 is answered with an `error`. `lock` and `follow` are shared flags;
   releasing the lock hands off on the next settle, not at once.
 - `search_places` ranks the embedded gazetteer (GeoNames populated places
-  with population ≥ 5000, clipped to the NEXRAD network envelope) for the
+  with population ≥ 5000, worldwide) for the
   location picker and is answered with `places` to the sender only, like
   `tile_ready`. Map labels stay on Natural Earth. `query` is required;
-  optional `lat` and `lon` order nearer matches first. Word-start matches
-  beat substrings. At most eight results. A blank query returns no results.
+  whitespace splits it into tokens, and every token must match the name,
+  `region`, or `country` (ISO 3166-1 alpha-2 or the English short name, so
+  `santiago chile` reaches Santiago, CL). A token that is a country name or
+  alias (`chile`, `usa`) filters by country and does not match city-name
+  prefixes (Chilecito, AR). Optional `lat` and `lon` order nearer matches
+  first unless a token named the country or region, in which case population
+  rank wins so a capital is not buried by a nearer namesake. Word-start
+  name matches beat substrings. At most eight results. A blank query
+  returns no results.
   A latitude or longitude outside range is answered with an `error`. The
   reply is not shared state:
 
@@ -203,8 +300,69 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 ```
   `region` is the admin-1 name (a US state, a Canadian province);
   `country` is the ISO 3166-1 alpha-2 code. Either may be omitted when empty.
-- `set_product` requests a product and elevation. An unsupported selection
+- `set_product` requests a product and elevation (or field altitude) from
+  `state.layers`. `REF` at index 0 is the Level II sweep. `WIND`, `PRES`,
+  and `WATER` are live field layers; `elevationIndex` selects an altitude
+  from that product's list (surface plus 925 / 850 / 700 / 500 / 300 hPa).
+  `TEMP` and `PRECIP` are surface field layers (Open-Meteo now/models, or
+  CDO / Meteostat station reports). Field layers are polar rasters around
+  the view centre; `frame.kind` is `field` and `frame.altitudeName` names
+  the cut. Archived mode rejects field products. An unsupported selection
   returns an `error` to its sender and retains the current frame.
+- `set_source` selects a layer source from `state.layers.sources`. `nexrad`
+  is the Level II sweep (a report). `now` is Open-Meteo's latest analysis
+  hour (`best_match`). `gfs` and `ecmwf` are forecast models. `wrf` is a
+  local Docker forecast; it does not start a run. `cdo` is NOAA NCEI
+  daily summaries (one day per step). `meteostat` is hourly station
+  dumps (one hour per step). Both are live-only report archives; they
+  open on `TEMP` unless `TEMP` or `PRECIP` is already selected.
+- `set_gramet` builds a live route GRAMET from four-letter ICAO origin
+  and destination, cruise TAS (80–550 kt), and optional flight level
+  (50–450, default 350). The engine resolves the airports from AWC
+  stationinfo and samples Open-Meteo along the great-circle. Archived
+  mode rejects it. A bad ICAO or TAS is an `error` to the sender.
+- `set_aviation` turns the live briefing on or off. `enabled` is
+  required. Optional `icao` is a four-letter id that pins METAR/TAF;
+  empty (or omitted) follows the last `view_center`. Pans do not replace
+  a pin. Chilean `SC*` pins and a Chile view use DGAC IFIS only.
+  Archived mode rejects it. A bad ICAO is an `error` to the sender.
+- `seek_history` jumps the CDO / Meteostat cursor to an ISO date or
+  hour. `step_history` moves `delta` days (`cdo`) or hours
+  (`meteostat`) and clamps to the archive window. Both need a history
+  source in live mode.
+- `estimate_wrf` fills `state.wrf.estimate` for the named centre and domain.
+  `widthKm` / `heightKm` are the domain sides (the map span is a good
+  default). Omit `dxKm` to pick a spacing from the span (3 / 9 / 15 km).
+  Omit `hours` for 12 h, `cores` for the host's CPUs. The estimate is a
+  desktop GNU WRF order-of-magnitude: GFS download, WPS/real, and
+  `wrf.exe`. Integration scales with cell count × levels × timesteps /
+  cores; timesteps follow the ARW CFL rule (dt seconds ≈ 6 × Δx km), so
+  a finer grid costs about Δx⁻³. The summary names a low–high minute
+  band. This is not a reservation.
+- `run_wrf` recomputes that estimate, then starts
+  `scripts/wrf-forecast.sh` against `OMASTORM_WRF_IMAGE` (default
+  `ncar/wrf_tutorial:latest`). Ordinary launch never does this. Live
+  only. Status is `queued` / `running` / `ok` / `failed` / `missing_docker`.
+  Working files stay under `$XDG_CACHE_HOME/omastorm/wrf/`. Raw wrfout
+  stays there; it is not a protocol texture.
+- `export_report` rasterizes a Lambert conformal conic chart of the
+  geographic box and writes a PNG under `$XDG_DATA_HOME/omastorm/reports/`
+  (default `~/.local/share/omastorm/reports/`). `layers` is the set to draw;
+  this build understands `ref` (also `storms`: lowest-cut reflectivity),
+  `basemap` (Natural Earth), and `rings` (50 / 100 / 150 km). Pressure, winds,
+  other altitudes, and model fields are not products of this build and are
+  answered with an `error` naming those three. `width` is optional, 480–2048,
+  default 1280. The box must have `south < north` and `west < east` on the
+  globe, and stay within 40° of latitude and 60° of longitude. The answer is
+  `report_ready` to the sender only; `state` does not change. `path` is
+  `reports/<file>` relative to `$XDG_DATA_HOME/omastorm/`. A station with no
+  sweep yet is an `error`.
+
+```json
+{"type":"report_ready","v":1,"path":"reports/KTLX-20130520T201643Z-e0-lcc-r1.png",
+ "projection":"lcc","layers":["ref","basemap","rings"],
+ "west":-98.0,"south":34.5,"east":-96.5,"north":36.2,"width":1280,"height":980}
+```
 - `step` moves `delta` entries along `timeline` from the frame shown, stopping
   at the ends; `seek` shows the entry with `id`. Both stop playback. A stepped
   frame's textures are republished under new `tex/` paths with the frame's
@@ -212,6 +370,14 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   and a move that lands where it already is changes nothing. `play` starts
   the loop when the timeline holds at least two complete frames (otherwise
   nothing changes); `pause` stops it and leaves the frame shown.
+- `set_weather` chooses the current-conditions source. `source` is `weewx`,
+  `weatherapi`, `openweathermap`, `tomorrow`, or `visualcrossing`; empty
+  turns the feed off. Cloud sources need `apiKey` and `lat`/`lon` (the map
+  centre). WeeWX needs `url` (`http` or `https`). The engine stores the key
+  only in memory, fetches the current observation, and publishes `state.weather`
+  without the key. A bad source, missing key or URL, or out-of-range
+  coordinate is answered with an `error`. Repeating the same request
+  changes nothing.
 - `tiles_needed` is the visible inclusive rectangle at one zoom, at
   most 64 tiles, sent when the viewport settles; it names no set (the engine
   chooses, see `tile_ready`). The engine serves it centre-out, and a newer

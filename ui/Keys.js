@@ -7,12 +7,13 @@
 
 // Bindings are Qt key sequences separated by spaces: "h Left" binds both.
 // Shift+L is the lock because lowercase l pans; the digit keys pick a
-// treatment; `w` toggles the weak-return floor; `?` opens the sheet; Escape with nothing open closes the window.
+// treatment; `w` toggles the weak-return floor; `e` opens the export sheet; `?` opens the keys sheet; Escape with nothing open closes the window.
 var ACTIONS = [
     { id: "search", keys: "/ s" },
     { id: "nearest", keys: "n" },
     { id: "lock", keys: "Shift+L" },
     { id: "home", keys: "Shift+H" },
+    { id: "weather", keys: "Shift+W" },
     { id: "pan_left", keys: "h Left" },
     { id: "pan_down", keys: "j Down" },
     { id: "pan_up", keys: "k Up" },
@@ -29,6 +30,25 @@ var ACTIONS = [
     { id: "glyphs", keys: "2" },
     { id: "stipple", keys: "3" },
     { id: "weak", keys: "w" },
+    { id: "layer_radar", keys: "Shift+R" },
+    { id: "layer_wind", keys: "4" },
+    { id: "layer_pressure", keys: "5" },
+    { id: "layer_water", keys: "6" },
+    { id: "layer_temp", keys: "7" },
+    { id: "layer_precip", keys: "8" },
+    { id: "source_now", keys: "Shift+O" },
+    { id: "source_gfs", keys: "Shift+G" },
+    { id: "source_ecmwf", keys: "Shift+E" },
+    { id: "source_wrf", keys: "Shift+F" },
+    { id: "source_cdo", keys: "Shift+C" },
+    { id: "source_meteostat", keys: "Shift+M" },
+    { id: "run_wrf", keys: "Shift+X" },
+    { id: "gramet", keys: "Shift+A" },
+    { id: "aviation", keys: "a" },
+    { id: "icao", keys: "i" },
+    { id: "altitude_down", keys: "Shift+[" },
+    { id: "altitude_up", keys: "Shift+]" },
+    { id: "export", keys: "e" },
     { id: "help", keys: "?" },
     { id: "close", keys: "Escape" }
 ];
@@ -39,6 +59,7 @@ var ROWS = [
      { label: "nearest radar", actions: ["nearest"] },
      { label: "lock / release radar", actions: ["lock"] },
      { label: "choose location", actions: ["home"] },
+     { label: "weather source", actions: ["weather"] },
      { label: "pan", actions: ["pan_left", "pan_down", "pan_up", "pan_right"] },
      { label: "zoom", actions: ["zoom_in", "zoom_out"] },
      { label: "reset to location", actions: ["reset"] }],
@@ -47,7 +68,15 @@ var ROWS = [
      { label: "play / pause", actions: ["play"] },
      { label: "oldest / newest frame", actions: ["oldest", "newest"] },
      { label: "Pixels, Glyphs, Stipple", actions: ["pixels", "glyphs", "stipple"] },
+     { label: "radar, wind, pressure, water, temp, precip", actions: ["layer_radar", "layer_wind", "layer_pressure", "layer_water", "layer_temp", "layer_precip"] },
+     { label: "now, GFS, ECMWF, WRF, CDO, Meteostat", actions: ["source_now", "source_gfs", "source_ecmwf", "source_wrf", "source_cdo", "source_meteostat"] },
+     { label: "run local WRF", actions: ["run_wrf"] },
+     { label: "route GRAMET", actions: ["gramet"] },
+     { label: "normal / aviation", actions: ["aviation"] },
+     { label: "aviation ICAO", actions: ["icao"] },
+     { label: "layer altitude", actions: ["altitude_down", "altitude_up"] },
      { label: "weak returns: hide / show", actions: ["weak"] },
+     { label: "export chart", actions: ["export"] },
      { label: "this sheet · esc closes", actions: ["help"] }]
 ];
 var TREATMENTS = ["PIXELS", "GLYPHS", "STIPPLE"];

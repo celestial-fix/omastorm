@@ -88,6 +88,45 @@ Item {
         default: return scan.status === "partial" && scan.scanTime ? "SCANNING · " + Math.max(0, scan.rays - 1) + " RADIALS" : "";
         }
     }
+    readonly property var aviation: state && state.aviation ? state.aviation : null
+    readonly property var gramet: aviation && aviation.gramet ? aviation.gramet : null
+    readonly property var history: state && state.history ? state.history : null
+    readonly property bool aviationMode: store.aviationWanted
+    readonly property string aviationLine: {
+        if (!aviationMode) return "";
+        if (!aviation || aviation.status === "idle") return "AVIATION · MAP";
+        if (aviation.status === "loading") return "AVIATION · LOADING";
+        if (aviation.status === "offline") return "AVIATION · OFFLINE";
+        if (aviation.status === "unavailable") return "AVIATION · NO BULLETIN";
+        var id = aviation.station ? aviation.station.id : "";
+        var cat = aviation.metar && aviation.metar.category ? aviation.metar.category + " · " : "";
+        var raw = aviation.metar ? aviation.metar.raw : "";
+        var n = aviation.hazards ? aviation.hazards.length : 0;
+        var hazards = n ? " · " + n + " HAZARD" + (n === 1 ? "" : "S") : "";
+        var pin = store.aviationIcao ? " · PIN" : "";
+        return (id ? id + " · " : "") + cat + (raw || "BRIEFING") + hazards + pin;
+    }
+    readonly property string grametLine: {
+        if (!aviationMode) return "";
+        if (!gramet || gramet.status === "idle") return "";
+        if (gramet.status === "loading") return "GRAMET · LOADING";
+        if (gramet.status === "offline") return "GRAMET · OFFLINE";
+        if (gramet.status === "unavailable") return "GRAMET · NO ROUTE";
+        var o = gramet.origin && gramet.origin.icao ? gramet.origin.icao : "";
+        var d = gramet.destination && gramet.destination.icao ? gramet.destination.icao : "";
+        var route = o && d ? o + "–" + d : "ROUTE";
+        var tas = gramet.cruiseKt ? " " + gramet.cruiseKt + " KT" : "";
+        return "GRAMET · " + route + tas + (gramet.raw ? " · " + gramet.raw : "");
+    }
+    readonly property string historyLine: {
+        if (!history || history.status === "idle") return "";
+        var src = (history.source || layerSource || "archive").toUpperCase();
+        if (history.status === "loading") return src + " · " + (history.time || "") + " · LOADING";
+        if (history.status === "offline") return src + " · OFFLINE";
+        if (history.status === "unavailable") return src + " · " + (history.time || "") + " · NO STATIONS";
+        var n = history.stations ? history.stations.length : 0;
+        return src + " · " + (history.time || "") + " · " + n + " STATION" + (n === 1 ? "" : "S");
+    }
     // Clock readings are the machine's local time; the wire is UTC. `zone`
     // appends the zone's abbreviation where the reading stands alone.
     function clock(iso, zone) { return iso ? Qt.formatTime(new Date(iso), zone ? "HH:mm t" : "HH:mm") : ""; }
@@ -100,8 +139,14 @@ Item {
     readonly property var slots: Timeline.slots(frames)
     readonly property int currentSlot: scan ? slots.findIndex(s => s.id === scan.id) : -1
     function togglePlay() { if (frames.length > 1) engine.send({type: playing ? "pause" : "play"}); }
-    function step(delta) { if (frames.length > 1) engine.send({type: "step", delta: delta}); }
-    function jump(toNewest) { if (frames.length > 1) engine.send({type: "seek", id: frames[toNewest ? frames.length - 1 : 0].id}); }
+    function step(delta) {
+        if (app.historySource) { engine.send({type: "step_history", delta: delta}); return; }
+        if (frames.length > 1) engine.send({type: "step", delta: delta});
+    }
+    function jump(toNewest) {
+        if (app.historySource) { engine.send({type: "step_history", delta: toNewest ? 100000 : -100000}); return; }
+        if (frames.length > 1) engine.send({type: "seek", id: frames[toNewest ? frames.length - 1 : 0].id});
+    }
     readonly property int bands: scan ? scan.palette.length : 0
     function legendLabel(index) {
         var bounds = scan.bounds;
@@ -183,6 +228,7 @@ Item {
         function onTreatmentChanged() { app.applySettings(); }
         function onWeakFloorChanged() { app.applySettings(); }
         function onValuesChanged() { app.applySettings(); }
+        function onWeatherValuesChanged() { app.applySettings(); }
     }
     // The keyboard map (DESIGN.md, keyboard map as built): Keys.js lays the
     // `[keys]` table over the defaults, asking Qt whether each sequence
@@ -197,7 +243,7 @@ Item {
     Shortcut { id: probe; enabled: false }
     function canon(sequence) { probe.sequence = sequence; return probe.portableText; }
     function applySettings() {
-        var errors = Location.configErrors(config.values);
+        var errors = Location.configErrors(config.values).concat(Location.weatherSettings(config.values, config.weatherValues).errors);
         var wanted = KeyMap.treatment(config.treatment, errors), floor = KeyMap.weakFloor(config.weakFloor, errors);
         var resolved = KeyMap.resolve(config.keys, canon);
         bindings = resolved.bindings;
@@ -206,13 +252,14 @@ Item {
         if (!session && KeyMap.envFloor(Quickshell.env("OMASTORM_WEAK")) === undefined) weakFloor = floor;
     }
     Component.onCompleted: applySettings()
-    readonly property bool overlayOpen: picker.open || locationPicker.open || sheet.open
+    readonly property bool overlayOpen: picker.open || locationPicker.open || grametPicker.open || icaoPicker.open || weatherPicker.open || sheet.open || reportSheet.open
     function run(action) {
         switch (action) {
         case "search": treatmentMenu.close(); picker.show(""); break;
         case "nearest": nearest(); break;
         case "lock": toggleLock(); break;
         case "home": locationPicker.show(""); break;
+        case "weather": weatherPicker.show(); break;
         case "pan_left": map.pan(-1, 0); break;
         case "pan_right": map.pan(1, 0); break;
         case "pan_up": map.pan(0, -1); break;
@@ -226,7 +273,42 @@ Item {
         case "oldest": jump(false); break;
         case "newest": jump(true); break;
         case "pixels": case "glyphs": case "stipple": treatment = action.toUpperCase(); treatmentMenu.close(); break;
+        case "layer_radar": setLayer("REF", 0); break;
+        case "layer_wind": setLayer("WIND", app.layerAltitude); break;
+        case "layer_pressure": setLayer("PRES", app.layerAltitude); break;
+        case "layer_water": setLayer("WATER", app.layerAltitude); break;
+        case "layer_temp": setLayer("TEMP", 0); break;
+        case "layer_precip": setLayer("PRECIP", 0); break;
+        case "source_now": setSource("now"); break;
+        case "source_gfs": setSource("gfs"); break;
+        case "source_ecmwf": setSource("ecmwf"); break;
+        case "source_wrf": setSource("wrf"); break;
+        case "source_cdo": setSource("cdo"); break;
+        case "source_meteostat": setSource("meteostat"); break;
+        case "run_wrf": runWrf(); break;
+        case "aviation":
+            treatmentMenu.close();
+            store.setAviation(!store.aviationWanted);
+            break;
+        case "icao":
+            treatmentMenu.close();
+            if (!store.aviationWanted) store.setAviation(true);
+            icaoPicker.show(store.aviationIcao || (app.aviation && app.aviation.station ? app.aviation.station.id : ""));
+            break;
+        case "gramet":
+            treatmentMenu.close();
+            if (!store.aviationWanted) store.setAviation(true);
+            grametPicker.show("");
+            break;
+        case "altitude_down": stepAltitude(-1); break;
+        case "altitude_up": stepAltitude(1); break;
         case "weak": weakFloor = weakFloor === null ? configuredFloor : null; break;
+        case "export":
+            treatmentMenu.close();
+            if (sheet.open) sheet.close();
+            if (reportSheet.open) reportSheet.close();
+            else { reportSheet.box = map.viewBox(); reportSheet.show(); }
+            break;
         case "help": treatmentMenu.close(); if (sheet.open) sheet.close(); else sheet.show(); break;
         case "close": dismiss(); break;
         }
@@ -241,10 +323,11 @@ Item {
         function menu(open: bool): void { if (open) treatmentMenu.show(); else treatmentMenu.close(); }
         function field(name: string): string { var value = JSON.parse(status())[name]; return value === undefined ? "" : String(value); }
         function status(): string {
-            return JSON.stringify({sheet: sheet.open, menu: treatmentMenu.opened, treatment: app.treatment, weakFloor: app.weakFloor === null ? "off" : app.weakFloor, error: app.configError,
+            return JSON.stringify({sheet: sheet.open, report: reportSheet.open, menu: treatmentMenu.opened, treatment: app.treatment, weakFloor: app.weakFloor === null ? "off" : app.weakFloor, error: app.configError,
                                    span: Math.round(map.span * 10) / 10, lat: Math.round(map.centerLat * 1000) / 1000, lon: Math.round(map.centerLon * 1000) / 1000,
                                    locationSource: app.store.locationSource, needsLocation: app.store.needsLocation,
-                                   site: app.siteId, locked: app.locked, lockSource: app.store.lockSource, outsideCoverage: app.outsideCoverage});
+                                   site: app.siteId, locked: app.locked, lockSource: app.store.lockSource, outsideCoverage: app.outsideCoverage,
+                                   aviation: app.store.aviationWanted, icao: app.store.aviationIcao});
         }
     }
     // Site navigation (DESIGN.md, location): the lock pins the radar against
@@ -253,6 +336,7 @@ Item {
     readonly property bool locked: state ? state.site.locked : false
     readonly property bool following: state ? state.site.follow && !state.site.locked : false
     readonly property var resetTarget: Location.resolveReset(Location.configCenter(config.values), config.location)
+    readonly property string weatherText: Location.formatWeather(state && state.weather)
     readonly property bool outsideCoverage: {
         var s = engine.site;
         return !!(locked && s && Location.distanceKm(map.centerLat, map.centerLon, s.lat, s.lon) > map.coverageKm);
@@ -267,9 +351,46 @@ Item {
         store.resetView();
         applyView();
     }
+    property string selectedSource: "nexrad"
+    readonly property string layerSource: selectedSource || (scan && scan.layerSource) || (scan && scan.kind === "field" ? "now" : "nexrad")
+    readonly property bool historySource: layerSource === "cdo" || layerSource === "meteostat"
+    property int layerAltitude: 0
+    function setLayer(product, altitude) {
+        if (!state) return;
+        if (product === "REF") selectedSource = "nexrad";
+        layerAltitude = product === "REF" ? 0 : Math.max(0, Number(altitude) || 0);
+        engine.send({type: "set_product", product: product, elevationIndex: layerAltitude});
+    }
+    function wrfSpan() { return Math.round(Math.min(map.maxSpan, Math.max(80, map.span))); }
+    function setSource(id) {
+        if (!state) return;
+        selectedSource = id;
+        engine.send({type: "set_source", source: id});
+        if (id === "wrf") {
+            engine.send({type: "estimate_wrf", lat: map.centerLat, lon: map.centerLon, widthKm: wrfSpan(), heightKm: wrfSpan()});
+        }
+    }
+    function runWrf() {
+        if (!state) return;
+        engine.send({type: "run_wrf", lat: map.centerLat, lon: map.centerLon, widthKm: wrfSpan(), heightKm: wrfSpan()});
+    }
+    function stepAltitude(delta) {
+        if (!state || !state.layers) return;
+        var product = scan && scan.kind === "field" ? scan.product : "";
+        if (!product) return;
+        var spec = state.layers.products.find(p => p.code === product);
+        if (!spec || !spec.altitudes.length) return;
+        var next = Math.max(0, Math.min(spec.altitudes.length - 1, layerAltitude + delta));
+        setLayer(product, next);
+    }
     function nearest() {
         var s = map.nearest();
-        if (!state || !s) return;
+        if (!state) return;
+        if (!s) {
+            app.notice = "NO NEXRAD WITHIN RANGE";
+            noticeTimer.restart();
+            return;
+        }
         store.followNearest(s.id);
     }
     function choose(s) {
@@ -277,6 +398,26 @@ Item {
         store.chooseRadar(s.id, Number(s.lat), Number(s.lon), s.name || s.id);
         applyView();
     }
+    property string pendingLookIcao: ""
+    function pinIcao(icao) {
+        store.setAviation(true, icao || "");
+        pendingLookIcao = icao || "";
+        if (!pendingLookIcao) return;
+        lookIcao(pendingLookIcao);
+    }
+    function lookIcao(icao) {
+        if (!icao) { pendingLookIcao = ""; return; }
+        var list = app.aviation && app.aviation.stations ? app.aviation.stations : [];
+        var s = null;
+        for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === icao) { s = list[i]; break; }
+        if (!s && app.aviation && app.aviation.station && app.aviation.station.id === icao)
+            s = app.aviation.station;
+        if (s && (Math.abs(Number(s.lat)) > 0.01 || Math.abs(Number(s.lon)) > 0.01)) {
+            map.lookAt(Number(s.lat), Number(s.lon));
+            pendingLookIcao = "";
+        }
+    }
+    onAviationChanged: if (pendingLookIcao) lookIcao(pendingLookIcao)
     // Drives the picker from outside for checks and captures:
     // quickshell ipc --pid <pid> call picker open tul
     IpcHandler {
@@ -299,6 +440,23 @@ Item {
         function setLon(text: string): void { locationPicker.lonText = text; }
         function matches(): string { return JSON.stringify(locationPicker.rows.map(r => r.where ? r.name + ", " + r.where : r.name)); }
         function status(): string { return JSON.stringify({open: locationPicker.open, query: locationPicker.query, selected: locationPicker.selected, focused: locationPicker.fieldFocused, count: locationPicker.rows.length, lat: locationPicker.latText, lon: locationPicker.lonText, error: locationPicker.coordError}); }
+    }
+    IpcHandler {
+        target: "weather"
+        function open(): void { weatherPicker.show(); }
+        function close(): void { weatherPicker.close(); }
+        function save(): void { weatherPicker.save(); }
+        function clear(): void { weatherPicker.clear(); }
+        function setSource(id: string): void { weatherPicker.source = id; }
+        function setKey(text: string): void { weatherPicker.keyText = text; }
+        function setUrl(text: string): void { weatherPicker.urlText = text; }
+        function status(): string {
+            return JSON.stringify({
+                open: weatherPicker.open, source: weatherPicker.source,
+                key: weatherPicker.keyText ? "(set)" : "", url: weatherPicker.urlText,
+                error: weatherPicker.error, text: app.weatherText
+            });
+        }
     }
     readonly property var theme: session ? session.theme.snapshot : themeInputs.snapshot
     Theme { id: themeInputs; registerIpc: !app.session }
@@ -475,7 +633,17 @@ Item {
                     Layout.leftMargin: 10
                 }
                 Item { Layout.fillWidth: true }
-                LabelText { text: !app.scan ? "" : app.scan.productName.toUpperCase() + (app.scan.scanTime ? " / " + app.scan.elevationDeg.toFixed(1) + "°" : "") }
+                LabelText { text: !app.scan ? "" : app.scan.productName.toUpperCase() + (app.scan.kind === "field"
+                    ? (app.scan.altitudeName ? " / " + app.scan.altitudeName.toUpperCase() : "")
+                    : (app.scan.scanTime ? " / " + app.scan.elevationDeg.toFixed(1) + "°" : "")) }
+                LabelText {
+                    visible: !win.compact && !!app.weatherText
+                    text: app.weatherText
+                    color: Qt.alpha(app.theme.foreground, .55)
+                    font.pixelSize: 10
+                    font.letterSpacing: 1
+                    Layout.leftMargin: 10
+                }
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -500,6 +668,123 @@ Item {
                     visible: !win.compact || engine.rejection !== "" || app.configError !== "" || store.persistError !== "" || app.notice !== "" || app.alert
                     horizontalAlignment: Text.AlignRight
                     Layout.fillWidth: true
+                }
+            }
+            LabelText {
+                visible: app.aviationLine !== "" && !win.compact
+                text: app.aviationLine
+                wrapMode: Text.Wrap
+                opacity: .75
+                font.pixelSize: 11
+                Layout.fillWidth: true
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run("icao") }
+            }
+            LabelText {
+                visible: app.aviationMode && !win.compact && !!app.aviation && !!app.aviation.taf && !!app.aviation.taf.raw
+                text: "TAF · " + app.aviation.taf.raw
+                wrapMode: Text.Wrap
+                opacity: .55
+                font.pixelSize: 10
+                Layout.fillWidth: true
+            }
+            LabelText {
+                visible: app.grametLine !== "" && !win.compact
+                text: app.grametLine
+                wrapMode: Text.Wrap
+                opacity: .75
+                font.pixelSize: 11
+                Layout.fillWidth: true
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run("gramet") }
+            }
+            LabelText {
+                visible: app.historyLine !== "" && !win.compact
+                text: app.historyLine
+                wrapMode: Text.Wrap
+                opacity: .75
+                font.pixelSize: 11
+                Layout.fillWidth: true
+            }
+            RowLayout {
+                visible: !win.compact && !!app.state
+                spacing: 8
+                Repeater {
+                    model: [
+                        {id: "normal", label: "NORMAL", group: "mode", key: "aviationOff"},
+                        {id: "aviation", label: "AVIATION", group: "mode", key: "aviationOn"},
+                        {id: "nexrad", label: "NEXRAD", group: "report", key: "layer_radar"},
+                        {id: "now", label: "NOW", group: "report", key: "source_now"},
+                        {id: "gfs", label: "GFS", group: "forecast", key: "source_gfs"},
+                        {id: "ecmwf", label: "ECMWF", group: "forecast", key: "source_ecmwf"},
+                        {id: "wrf", label: "WRF", group: "forecast", key: "source_wrf"},
+                        {id: "cdo", label: "CDO", group: "report", key: "source_cdo"},
+                        {id: "meteostat", label: "METEOSTAT", group: "report", key: "source_meteostat"}
+                    ]
+                    LabelText {
+                        required property var modelData
+                        readonly property bool modeChip: modelData.group === "mode"
+                        readonly property bool selected: modeChip
+                            ? (modelData.id === "aviation" ? app.aviationMode : !app.aviationMode)
+                            : app.layerSource === modelData.id
+                        text: modelData.label
+                        font.pixelSize: 10
+                        font.letterSpacing: 1
+                        color: selected ? app.theme.accent : app.theme.foreground
+                        opacity: selected ? 1 : .55
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (modelData.id === "aviation") {
+                                    if (!app.store.aviationWanted) app.store.setAviation(true);
+                                } else if (modelData.id === "normal") {
+                                    if (app.store.aviationWanted) app.store.setAviation(false);
+                                } else app.run(modelData.key);
+                            }
+                        }
+                    }
+                }
+            }
+            LabelText {
+                visible: !win.compact && !!app.state && !!app.state.wrf && !!app.state.wrf.estimate
+                text: (app.state.wrf.status && app.state.wrf.status !== "idle" ? app.state.wrf.status.replace("_", " ").toUpperCase() + " · " : "WRF · ") + app.state.wrf.estimate.summary
+                wrapMode: Text.Wrap
+                opacity: .55
+                font.pixelSize: 10
+                Layout.fillWidth: true
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run("run_wrf") }
+            }
+            RowLayout {
+                visible: !win.compact && !!app.state
+                spacing: 8
+                Repeater {
+                    model: [
+                        {code: "REF", label: "RADAR", key: "layer_radar"},
+                        {code: "WIND", label: "WIND", key: "layer_wind"},
+                        {code: "PRES", label: "PRES", key: "layer_pressure"},
+                        {code: "WATER", label: "WATER", key: "layer_water"},
+                        {code: "TEMP", label: "TEMP", key: "layer_temp"},
+                        {code: "PRECIP", label: "PRECIP", key: "layer_precip"}
+                    ]
+                    LabelText {
+                        required property var modelData
+                        text: modelData.label
+                        font.pixelSize: 10
+                        font.letterSpacing: 1
+                        color: app.scan && app.scan.product === modelData.code ? app.theme.accent : app.theme.foreground
+                        opacity: app.scan && app.scan.product === modelData.code ? 1 : .55
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run(modelData.key) }
+                    }
+                }
+                LabelText {
+                    visible: !!app.scan && app.scan.kind === "field"
+                    text: "ALT − / +"
+                    font.pixelSize: 10
+                    opacity: .55
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        onClicked: mouse => app.stepAltitude(mouse.button === Qt.RightButton ? -1 : 1)
+                    }
                 }
             }
             Rectangle {
@@ -543,6 +828,20 @@ Item {
                     Component.onCompleted: app.applyView()
                     // The map asks for tiles when its camera settles and the
                     // engine answers this window alone, tile by tile.
+                    hazards: app.aviationMode && app.aviation && app.aviation.hazards ? app.aviation.hazards : []
+                    route: app.aviationMode && app.gramet && app.gramet.coords ? app.gramet.coords : []
+                    airports: app.aviationMode && app.aviation && app.aviation.stations ? app.aviation.stations : []
+                    aviationIcao: app.store.aviationIcao
+                    onIcaoPicked: (icao, lat, lon) => {
+                        if (!app.aviationMode) app.store.setAviation(true);
+                        if (app.store.aviationIcao === icao) {
+                            app.pinIcao("");
+                            return;
+                        }
+                        app.store.setAviation(true, icao);
+                        app.pendingLookIcao = "";
+                        if (Math.abs(lat) > 0.01 || Math.abs(lon) > 0.01) map.lookAt(lat, lon);
+                    }
                     onTilesNeeded: (z, x0, y0, x1, y1) => engine.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
                 }
                 Connections { target: engine; function onTileReady(tile) { map.tileReady(tile); } }
@@ -565,12 +864,32 @@ Item {
                     }
                     MouseArea { id: helpArea; anchors.fill: parent; hoverEnabled: true; onClicked: app.run("help") }
                 }
+                Rectangle {
+                    id: exportChip
+                    anchors.top: parent.top; anchors.right: helpChip.left; anchors.margins: 10
+                    width: exportRow.implicitWidth + 12; height: 22
+                    color: Qt.alpha(app.theme.background, .9)
+                    opacity: exportArea.containsMouse ? 1 : .7
+                    visible: !!app.state
+                    RowLayout {
+                        id: exportRow
+                        anchors.centerIn: parent
+                        spacing: 5
+                        LabelText { text: "E"; font.pixelSize: 10 }
+                    }
+                    MouseArea { id: exportArea; anchors.fill: parent; hoverEnabled: true; onClicked: app.run("export") }
+                }
                 // The engine's attribution verbatim while an osm tile is on
                 // screen (docs/protocol.md, state.basemap); Natural Earth otherwise.
                 LabelText {
                     anchors.bottom: parent.bottom; anchors.right: parent.right; anchors.margins: 12
                     anchors.left: parent.horizontalCenter; horizontalAlignment: Text.AlignRight
-                    text: map.osmOnScreen && app.state && app.state.basemap ? app.state.basemap.osm.attribution : "NATURAL EARTH · OFFLINE"
+                    text: {
+                        var mapCredit = map.osmOnScreen && app.state && app.state.basemap ? app.state.basemap.osm.attribution : "NATURAL EARTH · OFFLINE";
+                        var air = app.aviationMode && app.aviation && app.aviation.status !== "idle" ? " · " + app.aviation.attribution : "";
+                        var hist = app.history && app.history.status !== "idle" ? " · " + app.history.attribution : "";
+                        return mapCredit + air + hist;
+                    }
                     visible: !!app.scan
                     font.pixelSize: 10; opacity: .7
                 }
@@ -744,6 +1063,7 @@ Item {
                 }
                 GlyphButton { glyph: app.locked ? "lock" : "follow"; selected: app.locked; enabled: !!app.state; onClicked: app.toggleLock() }
                 Control { text: win.compact ? "⌂" : "⌂ LOCATION"; onClicked: locationPicker.show("") }
+                Control { text: win.compact ? "☁" : "☁ WEATHER"; onClicked: weatherPicker.show() }
                 Item { Layout.fillWidth: true }
                 // The treatment chip (DESIGN.md, treatment control): one
                 // low-emphasis control naming the treatment; click opens the
@@ -792,6 +1112,24 @@ Item {
             cardTop: layout.anchors.margins + mapFrame.y
             onChosen: site => app.choose(site)
           }
+          GrametPicker {
+            id: grametPicker
+            anchors.fill: parent
+            theme: app.theme
+            compact: win.compact
+            cardTop: layout.anchors.margins + mapFrame.y
+            onSubmitted: (origin, destination, cruiseKt, flightLevel) => {
+                engine.send({type: "set_gramet", origin: origin, destination: destination, cruiseKt: cruiseKt, flightLevel: flightLevel});
+            }
+          }
+          IcaoPicker {
+            id: icaoPicker
+            anchors.fill: parent
+            theme: app.theme
+            compact: win.compact
+            cardTop: layout.anchors.margins + mapFrame.y
+            onSubmitted: icao => app.pinIcao(icao)
+          }
           LocationPicker {
             id: locationPicker
             anchors.fill: parent
@@ -808,6 +1146,15 @@ Item {
                 app.notice = name ? "LOCATION · " + name.toUpperCase() : "LOCATION · " + lat.toFixed(4) + ", " + lon.toFixed(4);
                 noticeTimer.restart();
             }
+          }
+          WeatherPicker {
+            id: weatherPicker
+            anchors.fill: parent
+            theme: app.theme
+            config: app.config
+            compact: win.compact
+            cardTop: layout.anchors.margins + mapFrame.y
+            onOpenChanged: if (open) forceActiveFocus();
           }
           // The treatment menu over the surface (not a Popup, which the
           // window overlay would draw outside the captured surface): a card
@@ -884,6 +1231,14 @@ Item {
             anchors.fill: parent
             theme: app.theme
             bindings: app.bindings
+            compact: win.compact
+            cardTop: layout.anchors.margins + mapFrame.y
+          }
+          ReportSheet {
+            id: reportSheet
+            anchors.fill: parent
+            theme: app.theme
+            engine: engine
             compact: win.compact
             cardTop: layout.anchors.margins + mapFrame.y
           }

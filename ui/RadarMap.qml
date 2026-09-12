@@ -32,6 +32,12 @@ Item {
     property int labelSize: 12
     property real radarOpacity: 1    // the radar layer alone; the basemap keeps its strength
     property bool locked: false      // the accent frame on the active marker and tag (DESIGN.md, markers)
+    property var hazards: []         // aviation polygons from state.aviation.hazards
+    property var route: []           // open GRAMET track from state.aviation.gramet.coords
+    property var airports: []        // nearby ICAO aerodromes from state.aviation.stations
+    property string aviationIcao: "" // pinned briefing id; empty follows the view
+    signal icaoPicked(string icao, real lat, real lon)
+
     // A frame with a scan time is radar to draw. The loading placeholder
     // (docs/protocol.md, frame.status: no scan time, one blank row) draws no
     // radar; tiles, labels, markers, and coverage still show, so a station
@@ -102,6 +108,17 @@ Item {
     }
     readonly property real centerLat: latitude(viewCenterY)
     readonly property real centerLon: longitude(viewCenterX)
+    /// Geographic box of the pixels on screen, for `export_report`.
+    function viewBox() {
+        var halfX = Math.max(width, 1) / 2 * unitsPerPixel;
+        var halfY = Math.max(height, 1) / 2 * unitsPerPixel;
+        return {
+            west: longitude(viewCenterX - halfX),
+            east: longitude(viewCenterX + halfX),
+            north: latitude(viewCenterY - halfY),
+            south: latitude(viewCenterY + halfY)
+        };
+    }
     // Centre the home view on a station before its frame arrives, so the
     // camera lands once where the state's site will put it.
     function jumpTo(lat, lon) {
@@ -131,11 +148,95 @@ Item {
             var km = distanceKm(centerLat, centerLon, s.lat, s.lon);
             if (km < bestKm) { bestKm = km; best = s; }
         }
-        return best;
+        return best && bestKm <= coverageKm ? best : null;
     }
     // Mercator units to viewport pixels.
     function sx(mx) { return width / 2 + (mx - viewCenterX) * worldPixels; }
     function sy(my) { return height / 2 + (my - viewCenterY) * worldPixels; }
+    // Issued-bulletin tooltip (DESIGN.md, aviation). The polygon is hit-tested
+    // in lat/lon; the card itself sits in screen space so pan does not carry it.
+    property var hoverHazard: null
+    property var hoverAirport: null
+    property real hoverX: 0
+    property real hoverY: 0
+    property bool hoverLive: false
+    property alias hoverTip: hazardTip
+    function latLonAt(px, py) {
+        return {
+            lat: latitude(viewCenterY + (py - height / 2) * unitsPerPixel),
+            lon: longitude(viewCenterX + (px - width / 2) * unitsPerPixel)
+        };
+    }
+    function pointInRing(lat, lon, coords) {
+        var inside = false;
+        for (var i = 0, j = coords.length - 1; i < coords.length; j = i++) {
+            var yi = coords[i].lat, xi = coords[i].lon;
+            var yj = coords[j].lat, xj = coords[j].lon;
+            if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi))
+                inside = !inside;
+        }
+        return inside;
+    }
+    function ringArea(coords) {
+        var area = 0;
+        for (var i = 0, j = coords.length - 1; i < coords.length; j = i++)
+            area += coords[j].lon * coords[i].lat - coords[i].lon * coords[j].lat;
+        return Math.abs(area);
+    }
+    function hazardRank(kind) {
+        return kind === "sigmet" ? 0 : kind === "airmet" ? 1 : kind === "notam" ? 2 : kind === "gramet" ? 3 : 4;
+    }
+    function airportAt(px, py) {
+        var best = null, bestD = 14 * 14;
+        for (var s of airports) {
+            if (!s) continue;
+            var dx = sx(mercatorX(s.lon)) - px;
+            var dy = sy(mercatorY(s.lat)) - py;
+            var d = dx * dx + dy * dy;
+            if (d < bestD) { best = s; bestD = d; }
+        }
+        return best;
+    }
+    function hazardAt(px, py) {
+        var at = latLonAt(px, py);
+        var best = null, bestRank = 99, bestArea = Infinity;
+        for (var h of hazards) {
+            if (!h || !h.coords || h.coords.length < 3 || !pointInRing(at.lat, at.lon, h.coords))
+                continue;
+            var rank = hazardRank(h.kind);
+            var area = ringArea(h.coords);
+            if (rank < bestRank || (rank === bestRank && area < bestArea)) {
+                best = h; bestRank = rank; bestArea = area;
+            }
+        }
+        return best;
+    }
+    function hoverAt(px, py) {
+        hoverX = px; hoverY = py; hoverLive = true;
+        hoverAirport = airportAt(px, py);
+        hoverHazard = hoverAirport ? null : hazardAt(px, py);
+    }
+    function airportTitle(s) {
+        if (!s || !s.id) return "";
+        return s.id === aviationIcao ? s.id + " · PINNED" : s.id;
+    }
+    function airportHint(s) {
+        if (!s || !s.id) return "";
+        return s.id === aviationIcao ? "Click to follow the map" : "Click to pin METAR / TAF";
+    }
+    function airportPinned(s) {
+        return !!(s && s.id && s.id === aviationIcao);
+    }
+    function pickAirport(s) {
+        if (!s || !s.id) return;
+        icaoPicked(s.id, Number(s.lat), Number(s.lon));
+    }
+    function hazardTitle(h) {
+        if (!h) return "";
+        var kind = (h.kind || "hazard").toUpperCase();
+        return h.hazard ? kind + " · " + String(h.hazard).toUpperCase() : kind;
+    }
+    onHazardsChanged: if (hoverLive) hoverAt(hoverX, hoverY)
 
     // Tile layer (DESIGN.md, basemap tiles). The zoom whose 512 px tiles land
     // nearest 1:1 on screen is requested for the visible rectangle when the
@@ -294,8 +395,11 @@ Item {
     property var places: []
     property var labels: []
     property var siteLabels: []
+    property var airportLabels: []
     onSitesChanged: scheduleLayout()
     onSiteIdChanged: scheduleLayout()
+    onAirportsChanged: { scheduleLayout(); if (hoverLive) hoverAt(hoverX, hoverY); }
+    onAviationIcaoChanged: scheduleLayout()
     onWidthChanged: { scheduleLayout(); settle.restart(); }
     onHeightChanged: { scheduleLayout(); settle.restart(); }
     onWorldPixelsChanged: { scheduleLayout(); Qt.callLater(refreshOverlay); }
@@ -329,7 +433,7 @@ Item {
     }
     function rebuildLabels() {
         var started = Date.now();
-        if (!scan) { labels = []; siteLabels = []; return; }
+        if (!scan) { labels = []; siteLabels = []; airportLabels = []; return; }
         labelMetrics.text = siteId;
         var occupied = [{x:-7, y:-7, w:14, h:14},
                         {x:7, y:4, w:labelMetrics.advanceWidth+6, h:16}], result = [], stations = [];
@@ -358,6 +462,25 @@ Item {
             stations.push({name:s.id, x:chosen.x, y:chosen.y, width:tw+6});
         }
         siteLabels = stations;
+        var airTags = [];
+        var airCandidates = (airports || []).filter(s => s && s.id
+            && Math.abs(mercatorX(s.lon)-overlayX) <= overlayHalfX
+            && Math.abs(mercatorY(s.lat)-overlayY) <= overlayHalfY).sort((a, b) => a.id.localeCompare(b.id));
+        for (var s of airCandidates) {
+            var ax = (mercatorX(s.lon) - siteMx) * worldPixels;
+            var ay = (mercatorY(s.lat) - siteMy) * worldPixels;
+            labelMetrics.text = s.id;
+            var aw = labelMetrics.advanceWidth, chosen = null;
+            for (var q of [{x:ax+10,y:ay+4}, {x:ax-aw-16,y:ay+4},
+                           {x:ax+10,y:ay-20}, {x:ax-aw-16,y:ay-20}]) {
+                if (occupied.some(o => q.x<o.x+o.w+5 && q.x+aw+11>o.x && q.y<o.y+o.h+4 && q.y+20>o.y)) continue;
+                chosen = q; break;
+            }
+            if (!chosen) continue;
+            occupied.push({x:chosen.x,y:chosen.y,w:aw+6,h:16});
+            airTags.push({name:s.id, x:chosen.x, y:chosen.y, width:aw+6, pinned: s.id === aviationIcao});
+        }
+        airportLabels = airTags;
         for (var p of places) {
             labelMetrics.text = p.name;
             var tx = (mercatorX(p.lon) - siteMx) * worldPixels, ty = (mercatorY(p.lat) - siteMy) * worldPixels;
@@ -537,6 +660,35 @@ Item {
                 }
             }
         }
+        Shape {
+            visible: map.route && map.route.length >= 2
+            readonly property var vertices: (map.route || []).map(p =>
+                Qt.point((map.mercatorX(p.lon) - map.siteMx) * 100000,
+                         (map.mercatorY(p.lat) - map.siteMy) * 100000))
+            transform: Scale { xScale: map.worldPixels/100000; yScale: xScale }
+            ShapePath {
+                fillColor: "transparent"
+                strokeColor: Qt.alpha(map.theme.accent, 0.85)
+                strokeWidth: 2 * 100000/map.worldPixels
+                PathPolyline { path: parent.vertices }
+            }
+        }
+        Repeater {
+            model: map.hazards.filter(h => h && h.coords && h.coords.length >= 3)
+            Shape {
+                required property var modelData
+                readonly property var vertices: modelData.coords.map(p =>
+                    Qt.point((map.mercatorX(p.lon) - map.siteMx) * 100000,
+                             (map.mercatorY(p.lat) - map.siteMy) * 100000))
+                transform: Scale { xScale: map.worldPixels/100000; yScale: xScale }
+                ShapePath {
+                    fillColor: Qt.alpha(map.theme.red, modelData.kind === "sigmet" ? 0.14 : 0.08)
+                    strokeColor: Qt.alpha(map.theme.red, modelData.kind === "sigmet" ? 0.7 : 0.45)
+                    strokeWidth: 100000/map.worldPixels
+                    PathPolyline { path: vertices.concat(vertices.length ? [vertices[0]] : []) }
+                }
+            }
+        }
         // Range rings at the site's Mercator scale; over 200 km the scale
         // drifts by a couple of percent, which a ring drawn as a circle hides.
         Repeater {
@@ -563,6 +715,38 @@ Item {
                 width: 6; height: 6
                 color: map.theme.background
                 border.width: 1; border.color: Qt.alpha(map.theme.foreground, .7)
+            }
+        }
+        Repeater {
+            model: map.airports
+            Rectangle {
+                required property var modelData
+                readonly property bool pinned: map.airportPinned(modelData)
+                x: (map.mercatorX(modelData.lon)-map.siteMx)*map.worldPixels-4
+                y: (map.mercatorY(modelData.lat)-map.siteMy)*map.worldPixels-4
+                width: 8; height: 8
+                rotation: 45
+                color: pinned ? map.theme.accent : map.theme.background
+                border.width: 1
+                border.color: pinned ? map.theme.accent : map.theme.foreground
+            }
+        }
+        Repeater {
+            model: map.airportLabels
+            Rectangle {
+                required property var modelData
+                x: modelData.x; y: modelData.y
+                width: modelData.width; height: 16
+                visible: overlayCamera.x+x >= 8 && overlayCamera.x+x+width <= map.width-8
+                    && overlayCamera.y+y >= 26 && overlayCamera.y+y+height <= map.height-30
+                color: Qt.alpha(map.theme.background, .88)
+                border.width: modelData.pinned ? 1 : 0
+                border.color: map.theme.accent
+                Text {
+                    x: 3; anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.name; color: modelData.pinned ? map.theme.accent : map.theme.foreground
+                    font.family: map.theme.font; font.pixelSize: map.labelSize
+                }
             }
         }
         Repeater {
@@ -626,14 +810,93 @@ Item {
             }
         }
     }
+    Rectangle {
+        id: hazardTip
+        visible: (!!map.hoverAirport || !!map.hoverHazard) && !pointer.pressed
+        width: tipColumn.implicitWidth + 24
+        height: tipColumn.implicitHeight + 20
+        x: {
+            var left = map.hoverX + 14;
+            if (left + width > map.width - 8) left = map.hoverX - width - 10;
+            return Math.round(Math.max(8, Math.min(map.width - width - 8, left)));
+        }
+        y: {
+            var top = map.hoverY + 14;
+            if (top + height > map.height - 8) top = map.hoverY - height - 10;
+            return Math.round(Math.max(8, Math.min(map.height - height - 8, top)));
+        }
+        // Below the pointer so hover stays on the map; the MouseArea is empty
+        // so this card still shows through.
+        z: 1
+        color: Qt.alpha(map.theme.background, .95)
+        border.width: 1
+        border.color: map.theme.foreground
+        Column {
+            id: tipColumn
+            x: 12; y: 10
+            spacing: 6
+            width: Math.min(360, Math.max(160, map.width - 48))
+            Text {
+                width: parent.width
+                text: map.hoverAirport ? map.airportTitle(map.hoverAirport) : map.hazardTitle(map.hoverHazard)
+                color: map.theme.foreground
+                font.family: map.theme.font
+                font.pixelSize: 12
+                font.bold: true
+                font.letterSpacing: 1
+                wrapMode: Text.Wrap
+            }
+            Text {
+                width: parent.width
+                visible: !!map.hoverAirport
+                text: map.airportHint(map.hoverAirport)
+                color: map.theme.foreground
+                opacity: .75
+                font.family: map.theme.font
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+            Text {
+                width: parent.width
+                visible: !map.hoverAirport && !!(map.hoverHazard && map.hoverHazard.raw)
+                text: map.hoverHazard && map.hoverHazard.raw ? map.hoverHazard.raw : ""
+                color: map.theme.foreground
+                opacity: .75
+                font.family: map.theme.font
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+        }
+    }
     MouseArea {
+        id: pointer
         anchors.fill: parent
-        cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+        z: 2
+        hoverEnabled: true
+        cursorShape: pressed ? Qt.ClosedHandCursor : (map.hoverAirport ? Qt.PointingHandCursor : Qt.OpenHandCursor)
         property real lastX
         property real lastY
-        onPressed: mouse => { lastX=mouse.x; lastY=mouse.y; }
+        property bool dragged: false
+        onPressed: mouse => {
+            lastX = mouse.x; lastY = mouse.y; dragged = false;
+            map.hoverHazard = null; map.hoverAirport = null;
+        }
+        onReleased: mouse => {
+            map.hoverAt(mouse.x, mouse.y);
+            if (!dragged && map.hoverAirport)
+                map.pickAirport(map.hoverAirport);
+        }
+        onExited: { map.hoverLive = false; map.hoverHazard = null; map.hoverAirport = null; }
         onPositionChanged: mouse => {
-            if(pressed) { map.look(map.viewCenterX - (mouse.x-lastX)*map.unitsPerPixel, map.viewCenterY - (mouse.y-lastY)*map.unitsPerPixel); lastX=mouse.x; lastY=mouse.y; }
+            if (pressed) {
+                if (Math.hypot(mouse.x - lastX, mouse.y - lastY) > 4) dragged = true;
+                map.look(map.viewCenterX - (mouse.x-lastX)*map.unitsPerPixel, map.viewCenterY - (mouse.y-lastY)*map.unitsPerPixel);
+                lastX=mouse.x; lastY=mouse.y;
+                map.hoverHazard = null;
+                map.hoverAirport = null;
+            } else {
+                map.hoverAt(mouse.x, mouse.y);
+            }
         }
         onWheel: wheel => {
             // Zoom about the pointer: the ground under it stays put.

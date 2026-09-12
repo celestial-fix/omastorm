@@ -19,6 +19,8 @@ QtObject {
     signal tileReady(var tile)
     /// Places answering this client's `search_places`; a reply, not state.
     signal placesReady(var message)
+    /// A finished chart answering this client's `export_report`.
+    signal reportReady(var message)
     readonly property string runtime: Quickshell.env("XDG_RUNTIME_DIR") + "/omastorm/"
     readonly property string texture: state && state.frame ? "file://" + runtime + state.frame.texture : ""
     readonly property string azimuthLut: state && state.frame ? "file://" + runtime + state.frame.azimuthLut : ""
@@ -71,6 +73,10 @@ QtObject {
                 tileReady(message);
             } else if (message.type === "places") {
                 placesReady(message);
+            } else if (message.type === "report_ready") {
+                if (typeof message.path !== "string" || message.path.indexOf("reports/") !== 0)
+                    throw new Error("Invalid report path: " + JSON.stringify(message.path));
+                reportReady(message);
             }
         } catch (e) { state = null; error = "Invalid engine message: " + e; }
     }

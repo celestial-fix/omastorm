@@ -36,7 +36,8 @@ Textures are written, synced, and renamed to unique paths. Cleanup checks
 state references once a second and removes textures unreferenced for 30 seconds.
 The grace period starts when observed, so a restart preserves recently served
 textures. Transport, commands, state, and texture encoding are defined in
-[docs/protocol.md](../docs/protocol.md).
+[docs/protocol.md](../docs/protocol.md). `set_weather` fetches one current
+observation from the user's source; the API key is not written to `state`.
 
 ## Radar
 
@@ -70,6 +71,8 @@ usable under every condition.
 
 `src/catalog.rs` stores the newest 60 complete frames per station in
 `$XDG_CACHE_HOME/omastorm/frames/`: a SQLite WAL catalog and PNG files.
+`export_report` writes Lambert conformal conic charts under
+`$XDG_DATA_HOME/omastorm/reports/`.
 Entries retain scan geometry, times, and source provenance. The UI never reads
 this store. The timeline serves cached frames through new runtime textures.
 Playback loops complete frames over about ten seconds, bounded to 250 ms–1 s
@@ -77,13 +80,67 @@ per frame. New live sweeps take the screen only while the newest entry is select
 
 The station table's source, retrieval date, and caveats are in `data/sites.json`
 and hello. It includes archived and test sites; membership does not imply live
-availability. An archived scan retains its measured coordinates.
+availability. An archived scan retains its measured coordinates. Following
+selects a station only when it lies within 460 km of the view centre.
+
+## Aviation
+
+Aviation is off until `set_aviation` `enabled` true. Live briefing then
+follows the last `view_center`, or a pinned four-letter `icao`. Chilean
+ICAO (`SC*`) and a view over Chile fetch METAR, TAF, NOTAM, and SIGMET
+only from DGAC IFIS (`aipchile.dgac.gob.cl`); everywhere else uses NOAA's
+Aviation Weather Center (nearest METAR in a 2° box, its TAF, and SIGMET /
+AIRMET / GAMET / issued GRAMET in a 5° box). Nearby aerodromes are listed
+so the map can mark them. `set_gramet` builds a route GRAMET from origin
+and destination ICAO plus cruise TAS (optional flight level): AWC
+stationinfo plus Open-Meteo samples along the great-circle. Archived mode
+and ordinary checks never fetch. `OMASTORM_AVIATION_URL` overrides the
+AWC root; `OMASTORM_CHILE_URL` overrides IFIS. The UI shows issued
+bulletin text, hazard polygons, ICAO markers, and the route polyline;
+hovering a polygon shows that bulletin in a themed tooltip, and hovering
+an ICAO marker lets a click pin it. It does not decode GRIB or NetCDF.
+
+## Field layers
+
+Live `set_product` for `WIND`, `PRES`, `WATER`, `TEMP`, or `PRECIP`
+fetches the current hour from Open-Meteo on a small grid around the view
+centre and rasterizes a polar sweep the existing shader draws. Surface is
+10 m wind, MSLP, 2 m humidity, 2 m temperature, and precipitation; aloft
+is wind, isobar height, and humidity at 925–300 hPa. `set_source` chooses
+`now` (report / `best_match`), `gfs`, or `ecmwf`. `OMASTORM_FIELDS_URL`
+overrides the API root. Archived mode does not fetch.
+
+## Historical reports
+
+`set_source` `cdo` or `meteostat` walks station archives in live mode.
+CDO uses NCEI daily-summaries in a box around the view (one day per
+`step_history`). Meteostat uses hourly dumps for the nearest stations
+(one hour per step). Both rasterize `TEMP` or `PRECIP` onto the field
+texture. Station lists and yearly CSVs cache under
+`$XDG_CACHE_HOME/omastorm/`. `OMASTORM_CDO_URL`,
+`OMASTORM_METEOSTAT_URL`, and `OMASTORM_METEOSTAT_STATIONS` override the
+roots.
+
+## Local WRF
+
+`estimate_wrf` / `run_wrf` drive `scripts/wrf-forecast.sh`. The estimate
+uses domain area, Δx, forecast length, vertical levels, and CPU cores.
+Integration time is pinned to a 450×450 km / 15 km / 33-level / 6 h / 4
+core reference (~10 min of `wrf.exe`); it scales with cells × levels ×
+timesteps / (cores × efficiency). Timesteps follow dt ≈ 6 s per km of
+Δx, so a finer grid is about Δx⁻³ more expensive. Download and WPS/real
+are added separately. The band is 0.6×–1.8× that total. Ordinary
+`run.sh` never starts Docker. `OMASTORM_WRF_IMAGE` names the container
+(default `ncar/wrf_tutorial:latest`). Geography belongs in
+`OMASTORM_WRF_GEOG`. Work stays under `$XDG_CACHE_HOME/omastorm/wrf/`.
 
 ## Basemap
 
 `build.rs` converts Natural Earth lines to a compact polyline blob and embeds
-populated places for map labels. GeoNames cities with population ≥ 5000,
-clipped to the same envelope, are the location-picker gazetteer. The 1:50m
+populated places for map labels. GeoNames cities with population ≥ 5000
+worldwide are the location-picker gazetteer (name, region, and country;
+`santiago chile` matches Santiago, CL; a country-name token does not
+match city-name prefixes). The 1:50m
 set is global; the 1:10m set is clipped to the NEXRAD network envelope. `src/tiles.rs` rasterizes these with `tiny-skia`,
 using 1:50m below z5 and 1:10m from z5. Segments outside a tile are skipped.
 

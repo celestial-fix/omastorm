@@ -1,6 +1,5 @@
-# Checkout-local Rust toolchain and Cargo output
-.tools/
-target/
+# Sideload test engine; package-plugin-test.sh puts a binary here
+/bin/omastorm-engine
 
 # Fixture working copies (scripts/setup-fixture.sh extracts data/fixtures here)
 data/raw/

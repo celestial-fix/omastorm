@@ -2,18 +2,22 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 export OMASTORM_ROOT="$PWD"
-# Plugin bootstrap: no build and no second Quickshell process. A checkout
-# with a debug engine stays offline. Otherwise the pinned release installer
-# fetches once, verifies the committed sha256, and installs under
-# $XDG_DATA_HOME/omastorm/bin (DESIGN.md, distribution).
+# Plugin bootstrap: no build and no second Quickshell process.
 if [[ ${1:-} == --ensure ]]; then
   # The plugin bootstrap runs detached; its stderr goes to the log it names.
   if [[ -n ${OMASTORM_BOOTSTRAP_LOG:-} ]]; then
     mkdir -p "$(dirname "$OMASTORM_BOOTSTRAP_LOG")"
     exec 2> "$OMASTORM_BOOTSTRAP_LOG"
   fi
+  # A checkout debug engine stays offline. A plugin-local binary (sideload
+  # test builds put one at bin/omastorm-engine) is next. Otherwise the
+  # pinned release installer fetches once, verifies the committed sha256,
+  # and installs under $XDG_DATA_HOME/omastorm/bin (DESIGN.md, distribution).
   if [[ -x target/debug/omastorm-engine ]]; then
     exec target/debug/omastorm-engine ensure
+  fi
+  if [[ -x bin/omastorm-engine ]]; then
+    exec bin/omastorm-engine ensure
   fi
   engine=$(bash scripts/install-engine.sh --print-path)
   exec "$engine" ensure

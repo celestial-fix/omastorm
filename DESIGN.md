@@ -34,7 +34,10 @@ map center in this order:
 
 1. Explicit `center_lat` and `center_lon` in `config.toml`.
 2. The last center remembered in `state.json`.
-3. Valid coordinates from Omarchy's weather location (`weather.json`).
+3. Valid coordinates from the weather location file (`weather.json`):
+   Omarchy's `{name, latitude, longitude}`, or the same place fields in a
+   WeeWX, WeatherAPI, OpenWeatherMap, Tomorrow.io, or Visual Crossing
+   payload. Do not fetch those APIs to discover a place.
 4. A location chosen through Omastorm's location picker.
 
 Only show onboarding when none of the first three sources supplies a valid
@@ -42,8 +45,8 @@ center. The popover offers "Choose a location", opening the expanded
 window's picker. Offer place search and "Enter coordinates", which reveals
 labeled latitude and longitude fields with validation. Place search is an
 engine `search_places` reply over GeoNames cities with population ≥ 5000
-in the network envelope (state/region and country so two Jacksonvilles are
-distinct); map labels stay Natural Earth. "Show radar" accepts the location.
+worldwide (state/region and country so two Jacksonvilles are
+distinct; `santiago chile` is Santiago, CL); map labels stay Natural Earth. "Show radar" accepts the location.
 No separate setup wizard or settings window is required. Keep the picker
 reachable after onboarding (`Shift+H` and LOCATION). Coordinate entry
 chooses a view; it does not create a permanent config override or lock a
@@ -56,7 +59,9 @@ to discover the user's location.
 
 Resolve the radar separately: an explicit `locked_radar` in config wins,
 otherwise restore a remembered radar lock, otherwise choose the station
-nearest the map center. A radar lock alone does not supply a map center or
+nearest the map center when it lies inside the 460 km reflectivity
+footprint. Outside that reach the map stands without a sweep; do not borrow
+a distant NEXRAD site. A radar lock alone does not supply a map center or
 bypass location onboarding. Newly chosen locations start unlocked unless a
 configured radar override applies.
 
@@ -99,7 +104,30 @@ file ownership and precedence. Do not write Omarchy, Hyprland, or system
 configuration.
 
 A product is a texture, legend, units, timestamp, and source from the engine.
-Level II is what is drawn.
+Level II reflectivity is the radar layer (a report). Live mode also offers
+field layers — wind, pressure, atmospheric water, temperature, and
+precipitation — from Open-Meteo **now** (latest analysis hour), forecast
+models (GFS, ECMWF IFS), or historical station reports (NOAA CDO daily
+summaries and Meteostat hourly dumps). Reports and forecasts stay labeled
+as such. History sources carry a time cursor: a day on CDO, an hour on
+Meteostat. A local WRF-ARW run is an opt-in forecast producer: the engine
+estimates wall time from domain area, grid spacing, forecast hours, and
+cores, then an explicit command may start the WRF Docker image on this
+machine. The engine rasterizes fields onto the same sweep texture the
+shader already samples; values still do not enter QML. Aviation is opt-in
+(NORMAL by default): live mode may carry a briefing for the view or a
+pinned ICAO — METAR (observed), TAF as issued bulletin text, SIGMET /
+AIRMET / GAMET / issued GRAMET / Chilean NOTAM polygons, and a route
+GRAMET from origin and destination ICAO plus cruise TAS. Chile (`SC*`
+and a view over the country) uses DGAC IFIS (`aipchile.dgac.gob.cl`) as
+the only bulletin source. That briefing is bulletin text and a polyline,
+not a drawn model field. Hovering a hazard polygon shows the issued
+bulletin in a tooltip that uses the same theme font and colors as the
+rest of the chrome; hovering an ICAO marker names the aerodrome, and a
+click (or the ICAO text picker) pins it. The engine never moves the
+camera: the UI looks at a station only after that explicit pick. Raw
+GRIB / NetCDF files stay out of the UI; WRF wrfout stays in the cache
+directory.
 
 The live poller follows the latest volume. `try_next` returning no chunk is
 normal between chunks, but 90 seconds with no chunk at all means the
@@ -111,6 +139,26 @@ the task has ended, start it again. Cached frames stay on screen through a
 rediscovery. A rediscovery that finds only a sweep already in the catalog
 leaves the frame and connection chrome alone; a newer volume still clears
 UNAVAILABLE / OFFLINE.
+
+An optional current-conditions source (WeeWX, WeatherAPI, OpenWeatherMap,
+Tomorrow.io, Visual Crossing) is the user's choice: they pick the source and
+enter their API key, or a WeeWX JSON URL. The engine fetches the current
+observation only — no forecasts — and the chrome shows temperature, condition,
+source, and observation time. The key lives in `weather.toml` (or `[weather]`
+in config.toml), travels to the engine over the local socket, and never enters
+`state.json` or the `state` broadcast. Unset, nothing is fetched.
+
+## Chart export
+
+`e` opens an export sheet over the window. The engine writes a Lambert
+conformal conic PNG of the view on screen under
+`$XDG_DATA_HOME/omastorm/reports/`. Layers are the products this build can
+draw: lowest-cut reflectivity (`ref` / storms), Natural Earth geography, and
+range rings. Pressure, winds, other altitudes, GRAMET route meteograms, and
+WRF or other model fields are not ingested; asking for them is refused by
+name. The live map stays Web Mercator. The chart is a document: paper
+background, the frame's palette, the actual scan time, and Natural Earth
+attribution. Radar values still do not enter JSON or QML.
 
 ## Scope
 

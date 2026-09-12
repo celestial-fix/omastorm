@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "Keys.js" as KeyMap
 import "Timeline.js" as Timeline
+import "Location.js" as Location
 
 FocusScope {
     id: card
@@ -13,6 +14,7 @@ FocusScope {
     readonly property var scan: state ? state.frame : null
     readonly property var frames: state ? state.timeline : []
     readonly property var slots: Timeline.slots(frames)
+    readonly property string weatherText: Location.formatWeather(state && state.weather)
     readonly property string condition: state ? state.source === "archived" ? "archived" : state.connection.status : "offline"
     readonly property color statusColor: condition === "stale" ? theme.yellow
         : condition === "offline" || condition === "unavailable" ? theme.red : theme.accent
@@ -93,6 +95,14 @@ FocusScope {
             Rectangle { width: 5; height: 5; radius: 3; color: card.statusColor }
             Label { text: card.statusText; color: card.statusColor; font.pixelSize: 11 }
         }
+        Label {
+            Layout.fillWidth: true
+            visible: card.weatherText !== ""
+            text: card.weatherText
+            font.pixelSize: 10
+            opacity: .65
+            elide: Text.ElideRight
+        }
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 280
@@ -113,6 +123,16 @@ FocusScope {
                 weakFloor: card.session.weakFloor
                 labelSize: 10
                 radarOpacity: card.condition === "unavailable" ? .6 : 1
+                hazards: card.session.aviationWanted && card.state && card.state.aviation ? card.state.aviation.hazards : []
+                route: card.session.aviationWanted && card.state && card.state.aviation && card.state.aviation.gramet
+                       && card.state.aviation.gramet.coords ? card.state.aviation.gramet.coords : []
+                airports: card.session.aviationWanted && card.state && card.state.aviation && card.state.aviation.stations
+                       ? card.state.aviation.stations : []
+                aviationIcao: card.session.aviationIcao
+                onIcaoPicked: (icao) => {
+                    if (card.session.aviationIcao === icao) card.session.setAviation(true, "");
+                    else card.session.setAviation(true, icao);
+                }
                 onTilesNeeded: (z, x0, y0, x1, y1) => connection.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
                 function applyView() {
                     if (!card.session.hasView) return;
@@ -135,7 +155,9 @@ FocusScope {
                     implicitWidth: product.implicitWidth + 10; implicitHeight: 20
                     color: Qt.alpha(card.theme.background, .92)
                     Label { id: product; anchors.centerIn: parent; font.pixelSize: 10; opacity: .8
-                        text: card.scan ? card.scan.productName.toUpperCase() + " " + card.scan.elevationDeg.toFixed(1) + "°" : "" }
+                        text: !card.scan ? "" : card.scan.kind === "field"
+                            ? card.scan.productName.toUpperCase() + (card.scan.altitudeName ? " " + card.scan.altitudeName.toUpperCase() : "")
+                            : card.scan.productName.toUpperCase() + " " + card.scan.elevationDeg.toFixed(1) + "°" }
                 }
                 Item { Layout.fillWidth: true }
                 Rectangle {
@@ -176,6 +198,22 @@ FocusScope {
             Layout.fillWidth: true
             visible: !!connection.rejection
             text: connection.rejection; color: card.theme.accent; wrapMode: Text.Wrap
+        }
+        Label {
+            Layout.fillWidth: true
+            visible: card.session.aviationWanted && !!card.state && !!card.state.aviation && card.state.aviation.status !== "idle"
+                && card.state.aviation.status !== "unavailable"
+            wrapMode: Text.Wrap
+            opacity: .7
+            font.pixelSize: 10
+            text: {
+                var a = card.state.aviation;
+                if (a.status === "loading") return "AVIATION · LOADING";
+                if (a.status === "offline") return "AVIATION · OFFLINE";
+                if (a.metar && a.metar.raw)
+                    return (a.station ? a.station.id + " · " : "") + a.metar.raw;
+                return "";
+            }
         }
         RowLayout {
             Layout.fillWidth: true

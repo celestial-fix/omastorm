@@ -18,6 +18,7 @@ pub enum Message<'a> {
     Error(&'a Rejection<'a>),
     TileReady(&'a TileReady<'a>),
     Places(&'a Places<'a>),
+    ReportReady(&'a ReportReady<'a>),
 }
 
 /// One tile answering a client's `tiles_needed`, sent to that client alone
@@ -53,6 +54,23 @@ pub struct Label {
     pub region: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub country: String,
+}
+
+/// A finished chart answering one client's `export_report`. A reply, not
+/// shared state: only the sender hears it, and `state` does not change.
+#[derive(Serialize)]
+pub struct ReportReady<'a> {
+    pub v: u32,
+    /// `reports/<file>`, relative to `$XDG_DATA_HOME/omastorm/`.
+    pub path: &'a str,
+    pub projection: &'a str,
+    pub layers: &'a [String],
+    pub west: f64,
+    pub south: f64,
+    pub east: f64,
+    pub north: f64,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Places answering one client's `search_places`. A reply, not shared state:
@@ -130,7 +148,53 @@ pub struct State {
     pub frame: Frame,
     /// The tile sources (`docs/protocol.md`, `tile_ready`).
     pub basemap: Basemap,
+    /// Aviation briefing for the last settled view centre or a pinned ICAO
+    /// (`docs/protocol.md`).
+    pub aviation: Aviation,
+    /// Products and altitudes the engine can draw (`docs/protocol.md`).
+    pub layers: Layers,
+    /// Local WRF-ARW producer (`docs/protocol.md`). Idle until estimated or run.
+    pub wrf: Wrf,
+    /// NOAA CDO / Meteostat historical reports (`docs/protocol.md`).
+    pub history: History,
     pub playing: bool,
+    /// Current conditions from the user's weather source, omitted when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weather: Option<Weather>,
+}
+
+/// `state.weather`: one current observation. Never carries the API key.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Weather {
+    pub source: String,
+    pub source_name: String,
+    pub status: WeatherStatus,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub observed_at: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature_c: Option<f64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub condition: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_kmh: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub humidity: Option<f64>,
+    pub attribution: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub message: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Copy, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum WeatherStatus {
+    Ok,
+    Loading,
+    Stale,
+    Unavailable,
+    Offline,
 }
 
 /// `state.basemap`: what draws the tiles and, for `osm`, whether it can.
@@ -155,6 +219,86 @@ pub struct Osm {
     /// The data version, empty until one is known.
     pub version: String,
     pub attribution: String,
+}
+
+/// Observed and advisory aviation products for the view (`docs/protocol.md`).
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Aviation {
+    pub status: AviationStatus,
+    pub attribution: String,
+    pub station: Option<AviationStation>,
+    pub metar: Option<Bulletin>,
+    pub taf: Option<Bulletin>,
+    pub hazards: Vec<Hazard>,
+    /// Nearby ICAO aerodromes the map can mark. Empty (and omitted) when
+    /// aviation is off or nothing is in reach.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stations: Vec<AviationStation>,
+    /// Pinned four-letter ICAO from `set_aviation`. Empty (and omitted)
+    /// means the briefing follows the last `view_center`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub icao: String,
+    /// Whether the client asked for a briefing (`set_aviation` `enabled`).
+    /// Omitted when false (the default): no fetch, status stays `idle`.
+    #[serde(skip_serializing_if = "is_false")]
+    pub enabled: bool,
+    /// Route GRAMET from `set_gramet` (origin, destination, cruise TAS).
+    pub gramet: Gramet,
+}
+
+#[derive(Serialize, PartialEq, Clone, Copy, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum AviationStatus {
+    /// Live, but no view centre has been briefed yet; archived stays here.
+    Idle,
+    Loading,
+    Ok,
+    Offline,
+    Unavailable,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AviationStation {
+    pub id: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub distance_km: f64,
+}
+
+/// One METAR or TAF bulletin. `time` is the observation or issue instant.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Bulletin {
+    pub raw: String,
+    pub time: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub valid_from: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub valid_to: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub category: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Hazard {
+    /// `sigmet`, `airmet`, `gamet`, `gramet`, or `notam`.
+    pub kind: String,
+    pub hazard: String,
+    pub raw: String,
+    pub coords: Vec<Point>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub valid_from: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub valid_to: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Copy, Debug)]
+pub struct Point {
+    pub lat: f64,
+    pub lon: f64,
 }
 
 #[derive(Serialize, PartialEq, Clone, Copy, Debug)]
@@ -197,6 +341,17 @@ pub fn is_tile_path(path: &str) -> bool {
             !name.is_empty() && name != "." && name != ".." && !name.contains(['\\', '\0'])
         })
         && parts.next().is_none()
+}
+
+/// Whether `path` names a chart the protocol allows: the literal `reports/`
+/// prefix and one further segment under the texture-name rule.
+pub fn is_report_path(path: &str) -> bool {
+    match path.strip_prefix("reports/") {
+        Some(name) => {
+            !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0'])
+        }
+        None => false,
+    }
 }
 
 impl State {
@@ -298,6 +453,170 @@ pub struct Frame {
     pub site: Geometry,
     pub palette: Vec<String>,
     pub bounds: Vec<i32>,
+    /// `sweep` (Level II) or `field` (wind / pressure / water). Empty is sweep.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub altitude_hpa: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub altitude_name: String,
+    /// `nexrad` (empty on Level II fixtures), `gfs`, or `ecmwf`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub layer_source: String,
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// The products, altitudes, and sources `set_product` / `set_source` accept.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct Layers {
+    pub attribution: String,
+    pub sources: Vec<LayerSource>,
+    pub products: Vec<LayerProduct>,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct LayerSource {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    /// `report` (observations / now) or `forecast` (NWP, including local WRF).
+    pub group: String,
+    pub model: String,
+}
+
+/// Local WRF run status and the last wall-clock estimate.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Wrf {
+    pub status: WrfStatus,
+    pub image: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub message: String,
+    pub estimate: WrfEstimate,
+}
+
+#[derive(Serialize, PartialEq, Clone, Copy, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum WrfStatus {
+    Idle,
+    MissingDocker,
+    Queued,
+    Running,
+    Ok,
+    Failed,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WrfEstimate {
+    pub width_km: u32,
+    pub height_km: u32,
+    pub area_km2: u32,
+    pub dx_km: f64,
+    pub hours: u32,
+    pub cores: u32,
+    pub levels: u32,
+    pub nx: u32,
+    pub ny: u32,
+    pub cells: u32,
+    pub dt_sec: f64,
+    pub steps: u32,
+    pub grib_files: u32,
+    pub download_min: u32,
+    pub preprocess_min: u32,
+    pub integrate_min: u32,
+    pub total_min: u32,
+    pub total_min_low: u32,
+    pub total_min_high: u32,
+    pub memory_mb: u32,
+    pub summary: String,
+}
+
+/// Route GRAMET: origin and destination ICAO, cruise TAS, and the sampled track.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Gramet {
+    pub status: AviationStatus,
+    pub origin: Option<GrametFix>,
+    pub destination: Option<GrametFix>,
+    pub cruise_kt: u32,
+    pub flight_level: u32,
+    pub distance_km: f64,
+    pub ete_min: u32,
+    pub raw: String,
+    pub coords: Vec<Point>,
+    pub legs: Vec<GrametLeg>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub message: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct GrametFix {
+    pub icao: String,
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GrametLeg {
+    pub dist_km: f64,
+    pub ete_min: u32,
+    pub lat: f64,
+    pub lon: f64,
+    pub wind_kt: f64,
+    pub wind_dir: f64,
+    pub temp_c: f64,
+    pub rh: f64,
+}
+
+/// Historical station reports (NOAA CDO / Meteostat) with a time cursor.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct History {
+    pub status: AviationStatus,
+    pub source: String,
+    pub time: String,
+    pub step: String,
+    pub attribution: String,
+    pub stations: Vec<HistoryStation>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub message: String,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryStation {
+    pub id: String,
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub distance_km: f64,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct LayerProduct {
+    pub code: String,
+    pub name: String,
+    pub units: String,
+    pub kind: String,
+    pub altitudes: Vec<LayerAltitude>,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct LayerAltitude {
+    pub index: u32,
+    pub name: String,
+    pub hpa: u32,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Copy, Debug)]
@@ -344,6 +663,65 @@ pub enum Command {
         product: String,
         elevation_index: u32,
     },
+    SetSource {
+        source: String,
+    },
+    /// Build a route GRAMET from origin and destination ICAO and cruise TAS.
+    #[serde(rename_all = "camelCase")]
+    SetGramet {
+        origin: String,
+        destination: String,
+        cruise_kt: u32,
+        #[serde(default)]
+        flight_level: u32,
+    },
+    /// Turn aviation briefing on or off. Optional `icao` pins METAR/TAF
+    /// to that station; empty follows the last `view_center`.
+    SetAviation {
+        enabled: bool,
+        #[serde(default)]
+        icao: String,
+    },
+    /// Jump the CDO / Meteostat cursor to an ISO date or hour.
+    SeekHistory {
+        time: String,
+    },
+    /// Step the CDO / Meteostat cursor by whole days or hours.
+    StepHistory {
+        delta: i64,
+    },
+    /// Recompute the WRF wall-clock estimate for the view (`docs/protocol.md`).
+    #[serde(rename_all = "camelCase")]
+    EstimateWrf {
+        lat: f64,
+        lon: f64,
+        #[serde(default)]
+        width_km: f64,
+        #[serde(default)]
+        height_km: f64,
+        #[serde(default)]
+        dx_km: f64,
+        #[serde(default)]
+        hours: u32,
+        #[serde(default)]
+        cores: u32,
+    },
+    /// Start a local WRF Docker run for the last estimate (live only).
+    #[serde(rename_all = "camelCase")]
+    RunWrf {
+        lat: f64,
+        lon: f64,
+        #[serde(default)]
+        width_km: f64,
+        #[serde(default)]
+        height_km: f64,
+        #[serde(default)]
+        dx_km: f64,
+        #[serde(default)]
+        hours: u32,
+        #[serde(default)]
+        cores: u32,
+    },
     /// The visible inclusive tile rectangle at one zoom, at most 64 tiles
     /// Answered tile by tile with `tile_ready` to the sender.
     TilesNeeded {
@@ -359,14 +737,41 @@ pub enum Command {
         lat: f64,
         lon: f64,
     },
-    /// Rank gazetteer places for the location picker. Answered with
-    /// `places` to the sender; optional `lat`/`lon` order nearer matches first.
+    /// Rank gazetteer places for the location picker (worldwide GeoNames
+    /// ≥ 5000). Answered with `places` to the sender; optional `lat`/`lon`
+    /// order nearer matches first.
     SearchPlaces {
         query: String,
         #[serde(default)]
         lat: Option<f64>,
         #[serde(default)]
         lon: Option<f64>,
+    },
+    /// Choose or clear the current-conditions source. `apiKey` never appears
+    /// in `state`. An empty `source` turns the feed off.
+    #[serde(rename_all = "camelCase")]
+    SetWeather {
+        #[serde(default)]
+        source: String,
+        #[serde(default)]
+        api_key: String,
+        #[serde(default)]
+        url: String,
+        #[serde(default)]
+        lat: Option<f64>,
+        #[serde(default)]
+        lon: Option<f64>,
+    },
+    /// Raster a Lambert conformal conic chart of the box. Answered with
+    /// `report_ready` to the sender; `layers` names the overlays to draw.
+    ExportReport {
+        west: f64,
+        south: f64,
+        east: f64,
+        north: f64,
+        layers: Vec<String>,
+        #[serde(default)]
+        width: Option<u32>,
     },
     /// Anything newer than this build.
     #[serde(other)]
@@ -375,7 +780,22 @@ pub enum Command {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_texture_path, is_tile_path};
+    use super::{is_report_path, is_texture_path, is_tile_path};
+
+    #[test]
+    fn report_paths_are_one_segment_under_reports() {
+        assert!(is_report_path("reports/KTLX-20130520T201643Z-lcc-r1.png"));
+        for bad in [
+            "",
+            "reports",
+            "reports/",
+            "reports/.",
+            "reports/a/b.png",
+            "tex/a.png",
+        ] {
+            assert!(!is_report_path(bad), "{bad:?}");
+        }
+    }
 
     #[test]
     fn tile_paths_are_set_zoom_column_and_one_file() {

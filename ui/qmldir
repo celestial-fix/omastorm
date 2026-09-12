@@ -2,6 +2,9 @@ singleton PluginSession 1.0 PluginSession.qml
 Config 1.0 Config.qml
 Engine 1.0 Engine.qml
 LocationPicker 1.0 LocationPicker.qml
+GrametPicker 1.0 GrametPicker.qml
+IcaoPicker 1.0 IcaoPicker.qml
+WeatherPicker 1.0 WeatherPicker.qml
 Remembered 1.0 Remembered.qml
 KeysSheet 1.0 KeysSheet.qml
 Panel 1.0 Panel.qml
@@ -10,5 +13,6 @@ RadarBar 1.0 RadarBar.qml
 RadarMap 1.0 RadarMap.qml
 RadarMark 1.0 RadarMark.qml
 RadarWindow 1.0 RadarWindow.qml
+ReportSheet 1.0 ReportSheet.qml
 SitePicker 1.0 SitePicker.qml
 Theme 1.0 Theme.qml

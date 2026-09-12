@@ -20,7 +20,7 @@ cat > "$check_dir/config.toml" <<'TOML'
 treatment = "neon"
 weak_floor = true
 [keys]
-pan_left = "a Left"
+pan_left = "q Left"
 zoom_in = "foo"
 nearest = "s"
 bogus = "x"
@@ -54,7 +54,7 @@ call status > /dev/null || fail "The window's keys IPC never answered"
 # with the first action.
 until_field site KFCX
 b=$(call bindings)
-[[ $b == *'"pan_left":["A","Left"]'* ]] || fail "pan_left was not rebound: $b"
+[[ $b == *'"pan_left":["Q","Left"]'* ]] || fail "pan_left was not rebound: $b"
 [[ $b == *'"zoom_in":["+","="]'* ]] || fail "A bad zoom_in did not keep its default: $b"
 [[ $b == *'"reset":["0"]'* ]] || fail "A numeric reset did not keep its default: $b"
 [[ $b == *'"search":["/","S"]'* && $b == *'"nearest":["N"]'* ]] || fail "The conflict on s did not stay with search: $b"
@@ -91,6 +91,10 @@ call run help
 expect '? opens the sheet' true "$(field sheet)"
 call run help
 expect '? again closes it' false "$(field sheet)"
+call run export
+expect 'e opens the export sheet' true "$(field report)"
+call run export
+expect 'e again closes it' false "$(field report)"
 call menu true
 expect 'The chip opens the menu' true "$(field menu)"
 call run stipple
@@ -110,6 +114,10 @@ until_field lon -97.5
 until_field locationSource state
 state_at "$check_dir/state.json" 35.4 -97.5 || fail "Shift+H location did not write state.json" "$(cat "$check_dir/state.json")"
 grep -q home_site "$check_dir/config.toml" && fail "Shift+H wrote home_site into config.toml"
+call run weather
+for _ in {1..50}; do [[ $(quickshell ipc --pid "$pid" call weather status | grep -o '"open":[a-z]*' | cut -d: -f2) == true ]] && break; sleep .1; done
+expect 'Shift+W opens the weather source' true "$(quickshell ipc --pid "$pid" call weather status | grep -o '"open":[a-z]*' | cut -d: -f2)"
+quickshell ipc --pid "$pid" call weather close
 
 # The fix applies through the file watch: no report, the new key in force,
 # and an explicit centre outranking the weather location.
