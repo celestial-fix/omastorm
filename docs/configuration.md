@@ -112,6 +112,7 @@ the machine's own state and weather files are not read unless
   `OMASTORM_WEAK` (`off` or a number), set by the capture scripts, outranks
   it. Anything else is reported like a bad `treatment` and leaves the default.
 - `[keys]`: one entry per action, laid over the defaults in `ui/Keys.js`:
+  `mode_radar` `mode_weather` `mode_aviation` (`F1` `F2` `F3`),
   `search` (`/ s`), `nearest` (`n`), `lock` (`Shift+L`), `home` (`Shift+H`,
   the location picker), `pan_left`
   `pan_down` `pan_up` `pan_right` (`h j k l` and the arrows), `zoom_in`
@@ -121,7 +122,9 @@ the machine's own state and weather files are not read unless
   `layer_wind` `layer_pressure` `layer_water` (`4 5 6`), `layer_temp`
   (`7`), `layer_precip` (`8`), `source_now`
   (`Shift+O`), `source_gfs` (`Shift+G`), `source_ecmwf` (`Shift+E`),
-  `source_wrf` (`Shift+F`), `source_cdo` (`Shift+C`),
+  `source_wrf` (`Shift+F`), `source_dmc` (`Shift+D`),
+  `source_dmc_wrf_gfs` (`Shift+Y`), `source_dmc_wrf_ecmwf` (`Shift+U`),
+  `source_cdo` (`Shift+C`),
   `source_meteostat` (`Shift+M`), `run_wrf` (`Shift+W`), `gramet`
   (`Shift+A`), `altitude_down`
   `altitude_up` (`Shift+[` `Shift+]`), `weak` (`w`), `help` (`?`), `close`
@@ -137,11 +140,12 @@ the machine's own state and weather files are not read unless
 ## Remembered state
 
 `~/.local/state/omastorm/state.json` is written atomically (a temporary file
-renamed into place). It holds the last map centre, span in kilometres, and
-the UI radar lock when one is set:
+renamed into place). It holds the last map centre, span in kilometres, the
+UI radar lock when one is set, and the last mode (`radar`, `weather`, or
+`aviation`):
 
 ```json
-{"lat":30.332,"lon":-81.656,"span":210,"lock":"KJAX","name":"Jacksonville"}
+{"lat":30.332,"lon":-81.656,"span":210,"lock":"KJAX","name":"Jacksonville","mode":"radar"}
 ```
 
 Invalid fields are dropped. A missing file is no remembered view.

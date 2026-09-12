@@ -9,6 +9,9 @@
 // Shift+L is the lock because lowercase l pans; the digit keys pick a
 // treatment; `w` toggles the weak-return floor; `?` opens the sheet; Escape with nothing open closes the window.
 var ACTIONS = [
+    { id: "mode_radar", keys: "F1" },
+    { id: "mode_weather", keys: "F2" },
+    { id: "mode_aviation", keys: "F3" },
     { id: "search", keys: "/ s" },
     { id: "nearest", keys: "n" },
     { id: "lock", keys: "Shift+L" },
@@ -39,6 +42,9 @@ var ACTIONS = [
     { id: "source_gfs", keys: "Shift+G" },
     { id: "source_ecmwf", keys: "Shift+E" },
     { id: "source_wrf", keys: "Shift+F" },
+    { id: "source_dmc", keys: "Shift+D" },
+    { id: "source_dmc_wrf_gfs", keys: "Shift+Y" },
+    { id: "source_dmc_wrf_ecmwf", keys: "Shift+U" },
     { id: "source_cdo", keys: "Shift+C" },
     { id: "source_meteostat", keys: "Shift+M" },
     { id: "run_wrf", keys: "Shift+W" },
@@ -50,27 +56,42 @@ var ACTIONS = [
 ];
 // The sheet's two columns (DESIGN.md). A row of
 // several actions shows each one's first key and names the alternates.
-var ROWS = [
-    [{ label: "search sites", actions: ["search"] },
-     { label: "nearest radar", actions: ["nearest"] },
-     { label: "lock / release radar", actions: ["lock"] },
-     { label: "choose location", actions: ["home"] },
-     { label: "pan", actions: ["pan_left", "pan_down", "pan_up", "pan_right"] },
-     { label: "zoom", actions: ["zoom_in", "zoom_out"] },
-     { label: "reset to location", actions: ["reset"] }],
-    [{ label: "previous frame", actions: ["previous_frame"] },
-     { label: "next frame", actions: ["next_frame"] },
-     { label: "play / pause", actions: ["play"] },
-     { label: "oldest / newest frame", actions: ["oldest", "newest"] },
-     { label: "Pixels, Glyphs, Stipple", actions: ["pixels", "glyphs", "stipple"] },
-     { label: "radar, wind, pressure, water, temp, precip", actions: ["layer_radar", "layer_wind", "layer_pressure", "layer_water", "layer_temp", "layer_precip"] },
-     { label: "now, GFS, ECMWF, WRF, CDO, Meteostat", actions: ["source_now", "source_gfs", "source_ecmwf", "source_wrf", "source_cdo", "source_meteostat"] },
-     { label: "run local WRF", actions: ["run_wrf"] },
-     { label: "route GRAMET", actions: ["gramet"] },
-     { label: "layer altitude", actions: ["altitude_down", "altitude_up"] },
-     { label: "weak returns: hide / show", actions: ["weak"] },
-     { label: "this sheet · esc closes", actions: ["help"] }]
+var ROWS_LEFT = [
+    { label: "radar / weather / aviation", actions: ["mode_radar", "mode_weather", "mode_aviation"] },
+    { label: "search sites", actions: ["search"] },
+    { label: "nearest radar", actions: ["nearest"] },
+    { label: "lock / release radar", actions: ["lock"] },
+    { label: "choose location", actions: ["home"] },
+    { label: "pan", actions: ["pan_left", "pan_down", "pan_up", "pan_right"] },
+    { label: "zoom", actions: ["zoom_in", "zoom_out"] },
+    { label: "reset to location", actions: ["reset"] }
 ];
+var ROWS_RADAR = [
+    { label: "previous frame", actions: ["previous_frame"] },
+    { label: "next frame", actions: ["next_frame"] },
+    { label: "play / pause", actions: ["play"] },
+    { label: "oldest / newest frame", actions: ["oldest", "newest"] },
+    { label: "Pixels, Glyphs, Stipple", actions: ["pixels", "glyphs", "stipple"] },
+    { label: "weak returns: hide / show", actions: ["weak"] },
+    { label: "this sheet · esc closes", actions: ["help"] }
+];
+var ROWS_WEATHER = [
+    { label: "previous / next time", actions: ["previous_frame", "next_frame"] },
+    { label: "oldest / newest archive", actions: ["oldest", "newest"] },
+    { label: "temperature, precip, wind, pressure, water", actions: ["layer_temp", "layer_precip", "layer_wind", "layer_pressure", "layer_water"] },
+    { label: "now, GFS, ECMWF, DMC, WRF-DMC, CDO, Meteostat", actions: ["source_now", "source_gfs", "source_ecmwf", "source_dmc", "source_dmc_wrf_gfs", "source_dmc_wrf_ecmwf", "source_cdo", "source_meteostat"] },
+    { label: "run local WRF", actions: ["run_wrf"] },
+    { label: "layer altitude", actions: ["altitude_down", "altitude_up"] },
+    { label: "this sheet · esc closes", actions: ["help"] }
+];
+var ROWS_AVIATION = [
+    { label: "route GRAMET", actions: ["gramet"] },
+    { label: "wind, pressure, water", actions: ["layer_wind", "layer_pressure", "layer_water"] },
+    { label: "now, GFS, ECMWF", actions: ["source_now", "source_gfs", "source_ecmwf"] },
+    { label: "layer altitude", actions: ["altitude_down", "altitude_up"] },
+    { label: "this sheet · esc closes", actions: ["help"] }
+];
+var ROWS = [ROWS_LEFT, ROWS_RADAR];
 var TREATMENTS = ["PIXELS", "GLYPHS", "STIPPLE"];
 
 function split(value) { return String(value).trim().split(/\s+/).filter(s => s !== ""); }
@@ -154,8 +175,9 @@ function isArrows(sequences) {
     return sequences.length === 4 && arrows.every(a => sequences.indexOf(a) >= 0);
 }
 // The sheet's rows for a set of bindings: [{ caps: [...], label }] per column.
-function sheet(bindings) {
-    return ROWS.map(column => column.map(row => {
+function sheet(bindings, mode) {
+    var right = mode === "weather" ? ROWS_WEATHER : mode === "aviation" ? ROWS_AVIATION : ROWS_RADAR;
+    return [ROWS_LEFT, right].map(column => column.map(row => {
         var lists = row.actions.map(id => bindings[id] || []);
         if (lists.length === 1) return { caps: lists[0].map(pretty), label: row.label };
         var alternates = lists.map(list => list.slice(1)).reduce((all, list) => all.concat(list), []);

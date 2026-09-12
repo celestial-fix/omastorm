@@ -83,7 +83,9 @@ selects a station only when it lies within 460 km of the view centre.
 ## Aviation
 
 Live `view_center` fetches a briefing from NOAA's Aviation Weather Center:
-the nearest METAR in a 2° box, its TAF, and SIGMET / AIRMET / GAMET /
+the nearest aerodrome from `stationinfo` in a 2° box (so SCTB is
+identified even when the METAR bbox only has SCEL), that station's
+METAR by ICAO, its TAF, and SIGMET / AIRMET / GAMET /
 issued GRAMET hazards in a 5° box. `set_gramet` builds a route GRAMET
 from origin and destination ICAO plus cruise TAS (optional flight
 level): AWC stationinfo plus Open-Meteo samples along the great-circle.
@@ -98,7 +100,10 @@ fetches the current hour from Open-Meteo on a small grid around the view
 centre and rasterizes a polar sweep the existing shader draws. Surface is
 10 m wind, MSLP, 2 m humidity, 2 m temperature, and precipitation; aloft
 is wind, isobar height, and humidity at 925–300 hPa. `set_source` chooses
-`now` (report / `best_match`), `gfs`, or `ecmwf`. `OMASTORM_FIELDS_URL`
+`now` (report / `best_match`), `gfs`, `ecmwf`, or `dmc` (MeteoChile
+reports by ICAO). `dmc_wrf_gfs` / `dmc_wrf_ecmwf` are WRF-DMC regional
+forecasts; they need `OMASTORM_METEOCHILE_USER` and
+`OMASTORM_METEOCHILE_TOKEN`. `OMASTORM_FIELDS_URL`
 overrides the API root. Archived mode does not fetch.
 
 ## Historical reports

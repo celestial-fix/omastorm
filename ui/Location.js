@@ -106,7 +106,7 @@ function configErrors(values) {
 
 // Remembered view from state.json. Invalid fields are dropped, not fatal.
 function parseState(raw) {
-    var empty = { lat: undefined, lon: undefined, span: undefined, lock: "", name: "" };
+    var empty = { lat: undefined, lon: undefined, span: undefined, lock: "", name: "", mode: "radar" };
     if (raw === undefined || raw === null || raw === "") return empty;
     try {
         var json = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -117,17 +117,24 @@ function parseState(raw) {
             lon: validLon(lon) ? lon : undefined,
             span: typeof span === "number" && isFinite(span) && span > 0 ? span : undefined,
             lock: typeof json.lock === "string" ? json.lock.trim().toUpperCase() : "",
-            name: typeof json.name === "string" ? json.name : ""
+            name: typeof json.name === "string" ? json.name : "",
+            mode: parseMode(json.mode)
         };
     } catch (e) { return empty; }
 }
 
-function stateObject(viewLat, viewLon, span, lock, name) {
+function parseMode(value) {
+    var id = String(value || "").toLowerCase();
+    return id === "weather" || id === "aviation" ? id : "radar";
+}
+
+function stateObject(viewLat, viewLon, span, lock, name, mode) {
     var o = {};
     if (validPair(viewLat, viewLon)) { o.lat = viewLat; o.lon = viewLon; }
     if (typeof span === "number" && isFinite(span) && span > 0) o.span = span;
     if (lock) o.lock = lock;
     if (name) o.name = name;
+    o.mode = parseMode(mode);
     return o;
 }
 

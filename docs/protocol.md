@@ -54,6 +54,9 @@ It is small (a few KB) so clients replace rather than merge.
    {"id":"gfs","name":"GFS","kind":"model","group":"forecast","model":"gfs_global"},
    {"id":"ecmwf","name":"ECMWF IFS","kind":"model","group":"forecast","model":"ecmwf_ifs025"},
    {"id":"wrf","name":"WRF","kind":"local","group":"forecast","model":"wrf"},
+   {"id":"dmc","name":"MeteoChile","kind":"analysis","group":"report","model":""},
+   {"id":"dmc_wrf_gfs","name":"WRF-DMC GFS","kind":"model","group":"forecast","model":"wrf_dmc_gfs"},
+   {"id":"dmc_wrf_ecmwf","name":"WRF-DMC ECMWF","kind":"model","group":"forecast","model":"wrf_dmc_ecmwf"},
    {"id":"cdo","name":"NOAA CDO","kind":"archive","group":"report","model":""},
    {"id":"meteostat","name":"Meteostat","kind":"archive","group":"report","model":""}],
   "products":[
@@ -188,7 +191,11 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   `status` `idle`. After a centre arrives, `loading` is replaced by `ok`
   (a METAR, TAF, or hazard), `unavailable` (the feed answered and nothing
   was near the view), or `offline` (the feed could not be read). `station`
-  is the nearest METAR; `metar` and `taf` carry `raw` bulletin text and
+  is the nearest aerodrome from AWC `stationinfo` (name included), not
+  merely the nearest station that happens to have a METAR in the bbox —
+  so SCTB (Tobalaba) is identified east of Santiago even when only SCEL
+  is in the current METAR box. `metar` is then fetched by that ICAO
+  (`metar?ids=`). `metar` and `taf` carry `raw` bulletin text and
   `time` (observation or issue, ISO-8601). TAF may add `validFrom` /
   `validTo`. `hazards` are SIGMET, AIRMET, GAMET, and issued GRAMET
   bulletins whose polygons intersect the view, each with `kind`, `hazard`,
@@ -275,7 +282,11 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
 - `set_source` selects a layer source from `state.layers.sources`. `nexrad`
   is the Level II sweep (a report). `now` is Open-Meteo's latest analysis
   hour (`best_match`). `gfs` and `ecmwf` are forecast models. `wrf` is a
-  local Docker forecast; it does not start a run. `cdo` is NOAA NCEI
+  local Docker forecast; it does not start a run. `dmc` is Dirección
+  Meteorológica de Chile reports (Chile, including SCTB) read by ICAO.
+  `dmc_wrf_gfs` and `dmc_wrf_ecmwf` are WRF-DMC regional forecasts
+  driven by GFS and ECMWF; they need `OMASTORM_METEOCHILE_USER` and
+  `OMASTORM_METEOCHILE_TOKEN`. `cdo` is NOAA NCEI
   daily summaries (one day per step). `meteostat` is hourly station
   dumps (one hour per step). Both are live-only report archives; they
   open on `TEMP` unless `TEMP` or `PRECIP` is already selected.

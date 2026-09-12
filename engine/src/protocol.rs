@@ -194,6 +194,8 @@ pub enum AviationStatus {
 #[serde(rename_all = "camelCase")]
 pub struct AviationStation {
     pub id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
     pub lat: f64,
     pub lon: f64,
     pub distance_km: f64,

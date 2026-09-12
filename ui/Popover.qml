@@ -93,6 +93,27 @@ FocusScope {
             Rectangle { width: 5; height: 5; radius: 3; color: card.statusColor }
             Label { text: card.statusText; color: card.statusColor; font.pixelSize: 11 }
         }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            Repeater {
+                model: [
+                    {id: "radar", label: "RADAR"},
+                    {id: "weather", label: "WEATHER"},
+                    {id: "aviation", label: "AVIATION"}
+                ]
+                Label {
+                    required property var modelData
+                    text: modelData.label
+                    font.pixelSize: 10
+                    font.letterSpacing: 1
+                    color: card.session.mode === modelData.id ? card.theme.accent : card.theme.foreground
+                    opacity: card.session.mode === modelData.id ? 1 : .5
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: card.session.setMode(modelData.id) }
+                }
+            }
+            Item { Layout.fillWidth: true }
+        }
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 280
@@ -113,8 +134,8 @@ FocusScope {
                 weakFloor: card.session.weakFloor
                 labelSize: 10
                 radarOpacity: card.condition === "unavailable" ? .6 : 1
-                    hazards: card.state && card.state.aviation ? card.state.aviation.hazards : []
-                    route: card.state && card.state.aviation && card.state.aviation.gramet
+                    hazards: card.session.mode === "aviation" && card.state && card.state.aviation ? card.state.aviation.hazards : []
+                    route: card.session.mode === "aviation" && card.state && card.state.aviation && card.state.aviation.gramet
                            && card.state.aviation.gramet.coords ? card.state.aviation.gramet.coords : []
                     onTilesNeeded: (z, x0, y0, x1, y1) => connection.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
                 function applyView() {
@@ -184,7 +205,7 @@ FocusScope {
         }
         Label {
             Layout.fillWidth: true
-            visible: !!card.state && !!card.state.aviation && card.state.aviation.status !== "idle"
+            visible: card.session.mode === "aviation" && !!card.state && !!card.state.aviation && card.state.aviation.status !== "idle"
                 && card.state.aviation.status !== "unavailable"
             wrapMode: Text.Wrap
             opacity: .7
@@ -201,6 +222,7 @@ FocusScope {
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
+            visible: card.session.mode === "radar"
             Control { text: "‹"; Accessible.name: "Previous frame"; enabled: card.frames.length > 1; onClicked: card.step(-1) }
             Control { text: card.state && card.state.playing ? "Ⅱ" : "▷"; Accessible.name: "Play or pause"; enabled: card.frames.filter(f => f.status === "complete").length > 1; onClicked: card.play() }
             Control { text: "›"; Accessible.name: "Next frame"; enabled: card.frames.length > 1; onClicked: card.step(1) }

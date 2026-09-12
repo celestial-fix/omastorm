@@ -1,5 +1,7 @@
+mod airports;
 mod aviation;
 mod catalog;
+mod dmc;
 mod fields;
 mod gramet;
 mod history;
@@ -572,6 +574,7 @@ struct Shared {
     gramet_req: Option<gramet::Request>,
     gramet_wake: Arc<Notify>,
     history_wake: Arc<Notify>,
+    dmc_wake: Arc<Notify>,
 }
 impl Shared {
     fn snapshot(&mut self) -> String {
@@ -785,6 +788,10 @@ impl Shared {
             self.history_wake.notify_one();
             return false;
         }
+        if dmc::is_dmc(&self.field_source) {
+            self.dmc_wake.notify_one();
+            return false;
+        }
         self.field_wake.notify_one();
         false
     }
@@ -859,6 +866,10 @@ impl Shared {
             };
             self.state.history = history::loading(&self.field_source, &time);
             self.history_wake.notify_one();
+            return (true, None);
+        }
+        if dmc::is_dmc(&self.field_source) {
+            self.dmc_wake.notify_one();
             return (true, None);
         }
         self.field_wake.notify_one();
@@ -1413,7 +1424,9 @@ async fn field_loop(shared: Arc<Mutex<Shared>>, client: Arc<fields::Client>, wak
                 continue;
             }
             match (shared.field_center, shared.field_sel.clone()) {
-                (Some(center), Some(sel)) if sel.0 != "wrf" && !fields::is_history(&sel.0) => {
+                (Some(center), Some(sel))
+                    if sel.0 != "wrf" && !fields::is_history(&sel.0) && !dmc::is_dmc(&sel.0) =>
+                {
                     (center, sel)
                 }
                 _ => continue,
@@ -1554,6 +1567,43 @@ async fn history_loop(shared: Arc<Mutex<Shared>>, client: Arc<history::Client>, 
                 shared.broadcast();
                 eprintln!("History layer: {e}");
             }
+        }
+    }
+}
+
+async fn dmc_loop(shared: Arc<Mutex<Shared>>, client: Arc<dmc::Client>, wake: Arc<Notify>) {
+    loop {
+        wake.notified().await;
+        sleep(Duration::from_millis(250)).await;
+        let (center, source, product, altitude) = {
+            let shared = shared.lock().unwrap();
+            if shared.state.source != Source::Live || !dmc::is_dmc(&shared.field_source) {
+                continue;
+            }
+            let Some(center) = shared.field_center else {
+                continue;
+            };
+            let (product, altitude) = match &shared.field_sel {
+                Some((_, product, alt)) => (product.clone(), *alt),
+                None => ("TEMP".into(), 0),
+            };
+            (center, shared.field_source.clone(), product, altitude)
+        };
+        match client
+            .fetch(center.0, center.1, &source, &product, altitude)
+            .await
+        {
+            Ok((frame, texture, lut)) => {
+                let mut shared = shared.lock().unwrap();
+                if shared.field_source != source || shared.state.source != Source::Live {
+                    continue;
+                }
+                if let Err(e) = shared.show(frame, &texture, &lut) {
+                    eprintln!("MeteoChile layer: {e}");
+                }
+                shared.broadcast();
+            }
+            Err(e) => eprintln!("MeteoChile layer: {e}"),
         }
     }
 }
@@ -2227,6 +2277,8 @@ fn serve(dir: PathBuf) -> io::Result<()> {
     let gramet_client = Arc::new(gramet::Client::open()?);
     let history_wake = Arc::new(Notify::new());
     let history_client = Arc::new(history::Client::open()?);
+    let dmc_wake = Arc::new(Notify::new());
+    let dmc_client = Arc::new(dmc::Client::open()?);
     let shared = Arc::new(Mutex::new(Shared {
         state: initial_state(frame, osm.info(), source, status),
         tiles: tile_store,
@@ -2255,6 +2307,7 @@ fn serve(dir: PathBuf) -> io::Result<()> {
         gramet_req: None,
         gramet_wake: gramet_wake.clone(),
         history_wake: history_wake.clone(),
+        dmc_wake: dmc_wake.clone(),
     }));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -2275,6 +2328,7 @@ fn serve(dir: PathBuf) -> io::Result<()> {
     runtime.spawn(wrf_loop(shared.clone(), wrf_wake));
     runtime.spawn(gramet_loop(shared.clone(), gramet_client, gramet_wake));
     runtime.spawn(history_loop(shared.clone(), history_client, history_wake));
+    runtime.spawn(dmc_loop(shared.clone(), dmc_client, dmc_wake));
     let cleanup_shared = shared.clone();
     runtime.spawn(async move {
         let mut retirement = Retirement::default();

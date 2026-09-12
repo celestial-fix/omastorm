@@ -27,15 +27,22 @@ client: it displays those textures in the bar popover and full window.
 - **Every site.** Pan the map and it follows the nearest station in range, or
   search by id, city, or country. Places worldwide, including Santiago,
   search; outside the NEXRAD footprint the map stands without a distant sweep.
-- **Aviation briefing.** Live METAR, TAF, SIGMET, AIRMET, and GAMET for
-  the view, from NOAA's Aviation Weather Center, plus a route GRAMET from
-  origin and destination ICAO and cruise TAS. Hazard polygons and the
-  route track draw on the map.
-- **Field layers.** Live wind, pressure, water, temperature, and
-  precipitation. Reports (NEXRAD, Open-Meteo now, NOAA CDO, Meteostat)
-  stay separate from forecasts (GFS, ECMWF IFS, optional local WRF).
+- **Three modes.** Radar is the original NEXRAD viewer. Weather is
+  history and forecasts (Open-Meteo, GFS, ECMWF, CDO, Meteostat, optional
+  WRF). Aviation is METAR, TAF, SIGMET / AIRMET / GAMET, and route GRAMET.
+- **Aviation briefing.** In aviation mode, live METAR, TAF, SIGMET, AIRMET,
+  and GAMET for the view, plus a route GRAMET from origin and destination
+  ICAO and cruise TAS. The nearest aerodrome is identified by ICAO (SCTB
+  at Tobalaba, not only SCEL). Search `sctb` in the location picker.
+- **MeteoChile.** Chilean reports and WRF-DMC forecasts (GFS- or
+  ECMWF-driven) from the Dirección Meteorológica de Chile. WRF-DMC needs
+  `OMASTORM_METEOCHILE_USER` and `OMASTORM_METEOCHILE_TOKEN`.
+- **Field layers.** In weather (and winds aloft in aviation): wind,
+  pressure, water, temperature, and precipitation. Reports stay separate
+  from forecasts. MeteoChile observations are available in aviation too.
   CDO and Meteostat travel in time by day or hour.
-- **Timeline.** Up to 60 scans per station, cached locally. Play, step, scrub.
+- **Timeline.** In radar mode, up to 60 scans per station, cached locally.
+  Play, step, scrub.
 - **Three treatments.** Glyphs, Pixels, and Stipple sample the same gate and
   paint the cell differently.
 - **Native.** Colors, font, and spacing come from the active Omarchy theme and
@@ -99,6 +106,7 @@ cannot be reached, with cached frames kept.
 
 | Key | Action |
 | --- | --- |
+| `F1` `F2` `F3` | Radar, weather, aviation modes |
 | `h` `j` `k` `l` or arrows | Pan |
 | `+` `-` | Zoom |
 | `0` | Reset to the configured or weather location |
@@ -112,6 +120,8 @@ cannot be reached, with cached frames kept.
 | `1` `2` `3` | Pixels, Glyphs, Stipple |
 | `4` `5` `6` `7` `8` | Wind, pressure, water, temperature, precipitation |
 | `Shift+O` `Shift+G` `Shift+E` `Shift+F` | Now, GFS, ECMWF, WRF sources |
+| `Shift+D` | MeteoChile reports |
+| `Shift+Y` `Shift+U` | WRF-DMC (GFS / ECMWF drivers) |
 | `Shift+C` `Shift+M` | NOAA CDO and Meteostat archives |
 | `Shift+A` | Route GRAMET (origin, destination, TAS) |
 | `Shift+W` | Run local WRF (after the time estimate) |
@@ -127,7 +137,7 @@ are hidden by default and the legend says so; `w` shows them.
 ## Configuration
 
 `~/.config/omastorm/config.toml` holds deliberate preferences. The app saves
-last map center, zoom, and UI radar lock separately in
+last map center, zoom, UI radar lock, and mode separately in
 `$XDG_STATE_HOME/omastorm/state.json` (default
 `~/.local/state/omastorm/state.json`). Navigation never rewrites your config.
 `Shift+H`, or LOCATION, opens the location picker; it writes state, not config.
