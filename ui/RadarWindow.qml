@@ -7,6 +7,7 @@ import "Sites.js" as Sites
 import "Keys.js" as KeyMap
 import "Location.js" as Location
 import "Timeline.js" as Timeline
+import "Chrome.js" as Chrome
 
 Item {
     id: app
@@ -137,11 +138,15 @@ Item {
     readonly property int currentSlot: scan ? slots.findIndex(s => s.id === scan.id) : -1
     function togglePlay() { if (frames.length > 1) engine.send({type: playing ? "pause" : "play"}); }
     function step(delta) {
-        if (app.historySource) { engine.send({type: "step_history", delta: delta}); return; }
+        if (app.layerSource === "cdo") {
+            engine.send({type: "step_history", delta: delta * Math.max(1, Math.round(app.timeStepHours / 24))});
+            return;
+        }
+        if (app.timedSource) { engine.send({type: "step_history", delta: delta * app.timeStepHours}); return; }
         if (frames.length > 1) engine.send({type: "step", delta: delta});
     }
     function jump(toNewest) {
-        if (app.historySource) { engine.send({type: "step_history", delta: toNewest ? 100000 : -100000}); return; }
+        if (app.timedSource) { engine.send({type: "step_history", delta: toNewest ? 100000 : -100000}); return; }
         if (frames.length > 1) engine.send({type: "seek", id: frames[toNewest ? frames.length - 1 : 0].id});
     }
     readonly property int bands: scan ? scan.palette.length : 0
@@ -249,7 +254,7 @@ Item {
         if (!session && KeyMap.envFloor(Quickshell.env("OMASTORM_WEAK")) === undefined) weakFloor = floor;
     }
     Component.onCompleted: applySettings()
-    readonly property bool overlayOpen: picker.open || locationPicker.open || grametPicker.open || sheet.open
+    readonly property bool overlayOpen: picker.open || locationPicker.open || grametPicker.open || sheet.open || sourcesPicker.open
     function run(action) {
         switch (action) {
         case "mode_radar": setMode("radar"); break;
@@ -272,12 +277,13 @@ Item {
         case "oldest": jump(false); break;
         case "newest": jump(true); break;
         case "pixels": case "glyphs": case "stipple": setMode("radar", true); treatment = action.toUpperCase(); treatmentMenu.close(); break;
-        case "layer_radar": setMode("radar", true); setLayer("REF", 0); break;
-        case "layer_wind": if (!aviationMode) setMode("weather", true); setLayer("WIND", app.layerAltitude); break;
-        case "layer_pressure": if (!aviationMode) setMode("weather", true); setLayer("PRES", app.layerAltitude); break;
-        case "layer_water": if (!aviationMode) setMode("weather", true); setLayer("WATER", app.layerAltitude); break;
-        case "layer_temp": setMode("weather", true); setLayer("TEMP", 0); break;
-        case "layer_precip": setMode("weather", true); setLayer("PRECIP", 0); break;
+        case "layer_radar": chooseProduct("REF"); break;
+        case "layer_wind": chooseProduct("WIND"); break;
+        case "layer_pressure": chooseProduct("PRES"); break;
+        case "layer_water": chooseProduct("WATER"); break;
+        case "layer_temp": chooseProduct("TEMP"); break;
+        case "layer_precip": chooseProduct("PRECIP"); break;
+        case "source_nexrad": setSource("nexrad"); break;
         case "source_now": if (!aviationMode) setMode("weather", true); setSource("now"); break;
         case "source_gfs": if (!aviationMode) setMode("weather", true); setSource("gfs"); break;
         case "source_ecmwf": if (!aviationMode) setMode("weather", true); setSource("ecmwf"); break;
@@ -334,8 +340,16 @@ Item {
         applyView();
     }
     property string selectedSource: "nexrad"
+    property var selectedProducts: ["REF"]
+    property int timeStepHours: 1
     readonly property string layerSource: selectedSource || (scan && scan.layerSource) || (scan && scan.kind === "field" ? "now" : "nexrad")
     readonly property bool historySource: layerSource === "cdo" || layerSource === "meteostat"
+    readonly property bool timedSource: historySource || layerSource === "now" || layerSource === "gfs" || layerSource === "ecmwf" || layerSource === "wrf" || layerSource === "dmc_wrf_gfs" || layerSource === "dmc_wrf_ecmwf"
+    readonly property var availableTimeSteps: Chrome.timeSteps(layerSource)
+    readonly property string clockTime: {
+        if (history && history.time && (historySource || timedSource)) return history.time;
+        return scan && scan.scanTime ? scan.scanTime : "";
+    }
     readonly property string appMode: store.mode || "radar"
     readonly property bool radarMode: appMode === "radar"
     readonly property bool weatherMode: appMode === "weather"
@@ -355,35 +369,48 @@ Item {
     function applyModeDefaults(id) {
         if (!state || state.source !== "live") return;
         if (id === "radar") {
-            setLayer("REF", 0);
+            chooseProduct("REF");
             return;
         }
         if (id === "weather") {
             if (layerSource === "nexrad" || !selectedSource || selectedSource === "nexrad") {
                 setSource("now");
-                setLayer("TEMP", 0);
+                chooseProduct("TEMP");
             }
             return;
         }
         if (layerSource === "nexrad" || historySource || layerSource === "wrf") {
             setSource("now");
-            setLayer("WIND", layerAltitude);
+            chooseProduct("WIND");
         }
+    }
+    function chooseProduct(code) {
+        var next = Chrome.toggleProducts(selectedProducts, code);
+        selectedProducts = next.selected;
+        setLayer(next.active, productAltitude(next.active));
+    }
+    function productAltitude(code) {
+        if (code === "REF" || code === "TEMP" || code === "PRECIP") return 0;
+        return layerAltitude;
     }
     function setLayer(product, altitude) {
         if (!state) return;
         if (product === "REF") selectedSource = "nexrad";
-        layerAltitude = product === "REF" ? 0 : Math.max(0, Number(altitude) || 0);
+        layerAltitude = product === "REF" || product === "TEMP" || product === "PRECIP" ? 0 : Math.max(0, Number(altitude) || 0);
         engine.send({type: "set_product", product: product, elevationIndex: layerAltitude});
     }
     function wrfSpan() { return Math.round(Math.min(map.maxSpan, Math.max(80, map.span))); }
     function setSource(id) {
         if (!state) return;
         selectedSource = id;
+        var steps = Chrome.timeSteps(id);
+        if (steps.length && steps.indexOf(timeStepHours) < 0) timeStepHours = steps[0];
         engine.send({type: "set_source", source: id});
-        if (id === "wrf") {
+        if (Chrome.isWrfProducer(id)) {
             engine.send({type: "estimate_wrf", lat: map.centerLat, lon: map.centerLon, widthKm: wrfSpan(), heightKm: wrfSpan()});
         }
+        if (id === "nexrad") chooseProduct("REF");
+        else if (scan && scan.product === "REF") chooseProduct(appMode === "aviation" ? "WIND" : "TEMP");
     }
     function runWrf() {
         if (!state) return;
@@ -579,28 +606,35 @@ Item {
                 Layout.fillWidth: true
                 RadarMark { ink: app.theme.accent; Layout.rightMargin: 6 }
                 LabelText { text: "OMASTORM"; font.bold: true; font.letterSpacing: 2; font.pixelSize: app.theme.baseSize + 2 }
-                RowLayout {
-                    spacing: 10
-                    Layout.leftMargin: 12
-                    Repeater {
-                        model: [
-                            {id: "radar", label: win.compact ? "RADAR" : "RADAR"},
-                            {id: "weather", label: win.compact ? "WX" : "WEATHER"},
-                            {id: "aviation", label: win.compact ? "AV" : "AVIATION"}
-                        ]
-                        LabelText {
-                            required property var modelData
-                            text: modelData.label
-                            font.pixelSize: 10
-                            font.letterSpacing: 1.4
-                            color: app.appMode === modelData.id ? app.theme.accent : app.theme.foreground
-                            opacity: app.appMode === modelData.id ? 1 : .5
-                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.setMode(modelData.id) }
-                        }
+                Repeater {
+                    model: Chrome.MODES
+                    Control {
+                        required property var modelData
+                        text: modelData.label
+                        selected: app.appMode === modelData.id
+                        implicitHeight: 26
+                        onClicked: app.setMode(modelData.id)
                     }
                 }
                 Item { Layout.fillWidth: true }
                 LabelText { text: app.sourceBadge; color: app.theme.accent; font.letterSpacing: 1.5 }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                Repeater {
+                    model: Chrome.SOURCES
+                    LabelText {
+                        required property var modelData
+                        text: modelData.label
+                        font.pixelSize: 10
+                        font.letterSpacing: 1
+                        color: app.layerSource === modelData.id ? app.theme.accent : app.theme.foreground
+                        opacity: app.layerSource === modelData.id ? 1 : .55
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run(modelData.key) }
+                    }
+                }
+                Item { Layout.fillWidth: true }
             }
             Rectangle { Layout.fillWidth: true; height: 1; color: Qt.alpha(app.theme.foreground, .25) }
             RowLayout {
@@ -700,39 +734,8 @@ Item {
                 font.pixelSize: 11
                 Layout.fillWidth: true
             }
-            RowLayout {
-                visible: !win.compact && !!app.state && !app.radarMode
-                spacing: 8
-                Repeater {
-                    model: app.aviationMode ? [
-                        {id: "now", label: "NOW", group: "report", key: "source_now"},
-                        {id: "gfs", label: "GFS", group: "forecast", key: "source_gfs"},
-                        {id: "ecmwf", label: "ECMWF", group: "forecast", key: "source_ecmwf"},
-                        {id: "dmc", label: "DMC", group: "report", key: "source_dmc"}
-                    ] : [
-                        {id: "now", label: "NOW", group: "report", key: "source_now"},
-                        {id: "gfs", label: "GFS", group: "forecast", key: "source_gfs"},
-                        {id: "ecmwf", label: "ECMWF", group: "forecast", key: "source_ecmwf"},
-                        {id: "dmc", label: "DMC", group: "report", key: "source_dmc"},
-                        {id: "dmc_wrf_gfs", label: "WRF·GFS", group: "forecast", key: "source_dmc_wrf_gfs"},
-                        {id: "dmc_wrf_ecmwf", label: "WRF·IFS", group: "forecast", key: "source_dmc_wrf_ecmwf"},
-                        {id: "wrf", label: "WRF", group: "forecast", key: "source_wrf"},
-                        {id: "cdo", label: "CDO", group: "report", key: "source_cdo"},
-                        {id: "meteostat", label: "METEOSTAT", group: "report", key: "source_meteostat"}
-                    ]
-                    LabelText {
-                        required property var modelData
-                        text: modelData.label
-                        font.pixelSize: 10
-                        font.letterSpacing: 1
-                        color: app.layerSource === modelData.id ? app.theme.accent : app.theme.foreground
-                        opacity: app.layerSource === modelData.id ? 1 : .55
-                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run(modelData.key) }
-                    }
-                }
-            }
             LabelText {
-                visible: app.weatherMode && !win.compact && !!app.state && !!app.state.wrf && !!app.state.wrf.estimate
+                visible: !win.compact && Chrome.isWrfProducer(app.layerSource) && !!app.state && !!app.state.wrf && !!app.state.wrf.estimate
                 text: (app.state.wrf.status && app.state.wrf.status !== "idle" ? app.state.wrf.status.replace("_", " ").toUpperCase() + " · " : "WRF · ") + app.state.wrf.estimate.summary
                 wrapMode: Text.Wrap
                 opacity: .55
@@ -741,41 +744,56 @@ Item {
                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run("run_wrf") }
             }
             RowLayout {
-                visible: !win.compact && !!app.state && !app.radarMode
+                visible: !win.compact && !!app.state && app.availableTimeSteps.length
                 spacing: 8
+                Control { text: "−"; implicitHeight: 26; implicitWidth: 30; enabled: app.timedSource; onClicked: app.step(-1) }
+                Control { text: "+"; implicitHeight: 26; implicitWidth: 30; enabled: app.timedSource; onClicked: app.step(1) }
                 Repeater {
-                    model: app.aviationMode ? [
-                        {code: "WIND", label: "WIND", key: "layer_wind"},
-                        {code: "PRES", label: "PRES", key: "layer_pressure"},
-                        {code: "WATER", label: "WATER", key: "layer_water"}
-                    ] : [
-                        {code: "TEMP", label: "TEMP", key: "layer_temp"},
-                        {code: "PRECIP", label: "PRECIP", key: "layer_precip"},
-                        {code: "WIND", label: "WIND", key: "layer_wind"},
-                        {code: "PRES", label: "PRES", key: "layer_pressure"},
-                        {code: "WATER", label: "WATER", key: "layer_water"}
-                    ]
+                    model: app.availableTimeSteps
                     LabelText {
                         required property var modelData
-                        text: modelData.label
+                        text: Chrome.stepLabel(modelData)
                         font.pixelSize: 10
                         font.letterSpacing: 1
-                        color: app.scan && app.scan.product === modelData.code ? app.theme.accent : app.theme.foreground
-                        opacity: app.scan && app.scan.product === modelData.code ? 1 : .55
-                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run(modelData.key) }
+                        color: app.timeStepHours === modelData ? app.theme.accent : app.theme.foreground
+                        opacity: app.timeStepHours === modelData ? 1 : .55
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.timeStepHours = modelData }
                     }
                 }
                 LabelText {
-                    visible: !!app.scan && app.scan.kind === "field"
-                    text: "ALT − / +"
+                    text: app.clockTime ? String(app.clockTime).replace("T", " ").replace(":00Z", "Z") : "TIME"
                     font.pixelSize: 10
-                    opacity: .55
-                    MouseArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.LeftButton | Qt.RightButton
-                        onClicked: mouse => app.stepAltitude(mouse.button === Qt.RightButton ? -1 : 1)
+                    opacity: .7
+                }
+                Item { Layout.fillWidth: true }
+                LabelText {
+                    visible: !!app.scan && (app.scan.kind === "field" || Chrome.anyField(app.selectedProducts))
+                    text: "ALT " + (app.scan && app.scan.altitudeName ? app.scan.altitudeName.toUpperCase() : "SFC")
+                    font.pixelSize: 10
+                    opacity: .7
+                }
+                Control { text: "ALT −"; implicitHeight: 26; visible: !!app.scan && app.scan.kind === "field"; onClicked: app.stepAltitude(-1) }
+                Control { text: "ALT +"; implicitHeight: 26; visible: !!app.scan && app.scan.kind === "field"; onClicked: app.stepAltitude(1) }
+            }
+            RowLayout {
+                visible: !win.compact && !!app.state
+                spacing: 8
+                Repeater {
+                    model: Chrome.PRODUCTS
+                    LabelText {
+                        required property var modelData
+                        readonly property bool on: app.selectedProducts.indexOf(modelData.code) >= 0
+                        readonly property bool drawn: app.scan && app.scan.product === modelData.code
+                        text: modelData.label
+                        font.pixelSize: 10
+                        font.letterSpacing: 1
+                        color: drawn ? app.theme.accent : app.theme.foreground
+                        opacity: on ? 1 : .45
+                        font.bold: drawn
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.run(modelData.key) }
                     }
                 }
+                Item { Layout.fillWidth: true }
             }
             Rectangle {
                 id: mapFrame
@@ -870,7 +888,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 12
-                visible: !!app.scan && (app.radarMode || (app.weatherMode && app.historySource))
+                visible: !!app.scan && (app.radarMode || app.timedSource)
                 RowLayout {
                     spacing: 5
                     GlyphButton { glyph: "first"; visible: !win.compact; enabled: app.frames.length > 1; onClicked: app.jump(false) }
@@ -1026,6 +1044,7 @@ Item {
                     }
                 }
                 GlyphButton { glyph: app.locked ? "lock" : "follow"; selected: app.locked; visible: app.radarMode; enabled: !!app.state; onClicked: app.toggleLock() }
+                Control { text: win.compact ? "API" : "API SOURCES"; onClicked: sourcesPicker.show() }
                 Control { text: win.compact ? "⌂" : "⌂ LOCATION"; onClicked: locationPicker.show("") }
                 Item { Layout.fillWidth: true }
                 // The treatment chip (DESIGN.md, treatment control): one
@@ -1085,6 +1104,13 @@ Item {
             onSubmitted: (origin, destination, cruiseKt, flightLevel) => {
                 engine.send({type: "set_gramet", origin: origin, destination: destination, cruiseKt: cruiseKt, flightLevel: flightLevel});
             }
+          }
+          SourcesPicker {
+            id: sourcesPicker
+            anchors.fill: parent
+            theme: app.theme
+            compact: win.compact
+            cardTop: layout.anchors.margins + mapFrame.y
           }
           LocationPicker {
             id: locationPicker

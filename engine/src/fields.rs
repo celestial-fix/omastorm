@@ -282,8 +282,13 @@ struct Cache {
     lon: f64,
     model: String,
     at: Instant,
-    samples: Vec<Sample>,
-    time: String,
+    grid: HourlyGrid,
+}
+
+#[derive(Clone, Default)]
+struct HourlyGrid {
+    times: Vec<String>,
+    hours: Vec<Vec<Sample>>,
 }
 
 #[derive(Clone, Default)]
@@ -332,6 +337,7 @@ impl Client {
         source_id: &str,
         product: &str,
         elevation_index: u32,
+        hour: &str,
     ) -> io::Result<(Frame, Vec<u8>, Vec<u8>)> {
         let source = source(source_id)
             .filter(|s| s.kind == "model" || s.kind == "analysis")
@@ -339,34 +345,32 @@ impl Client {
         let altitude = altitude(elevation_index)
             .ok_or_else(|| io::Error::other(format!("unknown field altitude {elevation_index}")))?;
         if self.should_refresh(lat, lon, source.model) {
-            let (samples, time) = self.load(lat, lon, source.model).await?;
+            let grid = self.load(lat, lon, source.model).await?;
             *self.last.lock().unwrap() = Some(Cache {
                 lat,
                 lon,
                 model: source.model.into(),
                 at: Instant::now(),
-                samples,
-                time,
+                grid,
             });
         }
         let cache = self.last.lock().unwrap();
         let cache = cache
             .as_ref()
             .ok_or_else(|| io::Error::other("field cache is empty"))?;
-        raster(
-            &cache.samples,
-            lat,
-            lon,
-            source.id,
-            product,
-            altitude,
-            &cache.time,
-        )
+        let index = pick_hour(&cache.grid, hour);
+        let samples = cache
+            .grid
+            .hours
+            .get(index)
+            .ok_or_else(|| io::Error::other("field hour is empty"))?;
+        let time = cache.grid.times.get(index).cloned().unwrap_or_default();
+        raster(samples, lat, lon, source.id, product, altitude, &time)
     }
 }
 
 impl Client {
-    async fn load(&self, lat: f64, lon: f64, model: &str) -> io::Result<(Vec<Sample>, String)> {
+    async fn load(&self, lat: f64, lon: f64, model: &str) -> io::Result<HourlyGrid> {
         let mut lats = Vec::new();
         let mut lons = Vec::new();
         for iy in 0..GRID {
@@ -415,7 +419,7 @@ impl Client {
         ]
         .join(",");
         let url = format!(
-            "{}?latitude={}&longitude={}&hourly={}&wind_speed_unit=kn&forecast_days=1&timezone=UTC&models={}",
+            "{}?latitude={}&longitude={}&hourly={}&wind_speed_unit=kn&forecast_days=4&timezone=UTC&models={}",
             self.base,
             lats.iter()
                 .map(|v| format!("{v:.4}"))
@@ -507,7 +511,7 @@ struct Hourly {
     height_300: Vec<Option<f64>>,
 }
 
-fn parse_grid(bytes: &[u8], lats: &[f64], lons: &[f64]) -> io::Result<(Vec<Sample>, String)> {
+fn parse_grid(bytes: &[u8], lats: &[f64], lons: &[f64]) -> io::Result<HourlyGrid> {
     let value: serde_json::Value = serde_json::from_slice(bytes).map_err(io::Error::other)?;
     let places: Vec<Place> = if value.is_array() {
         serde_json::from_value(value).map_err(io::Error::other)?
@@ -517,8 +521,27 @@ fn parse_grid(bytes: &[u8], lats: &[f64], lons: &[f64]) -> io::Result<(Vec<Sampl
     if places.is_empty() {
         return Err(io::Error::other("field response is empty"));
     }
-    let hour = current_hour(&places[0].hourly.time);
-    let time = places[0].hourly.time.get(hour).cloned().unwrap_or_default();
+    let n = places[0].hourly.time.len();
+    if n == 0 {
+        return Err(io::Error::other("field response has no hours"));
+    }
+    let mut times = Vec::with_capacity(n);
+    let mut hours = Vec::with_capacity(n);
+    for hour in 0..n {
+        times.push(iso_hour(
+            places[0]
+                .hourly
+                .time
+                .get(hour)
+                .map(String::as_str)
+                .unwrap_or(""),
+        ));
+        hours.push(samples_at(&places, lats, lons, hour));
+    }
+    Ok(HourlyGrid { times, hours })
+}
+
+fn samples_at(places: &[Place], lats: &[f64], lons: &[f64], hour: usize) -> Vec<Sample> {
     let mut samples = Vec::new();
     for (i, place) in places.iter().enumerate() {
         let hourly = &place.hourly;
@@ -569,7 +592,54 @@ fn parse_grid(bytes: &[u8], lats: &[f64], lons: &[f64]) -> io::Result<(Vec<Sampl
             precip_mm: at(&hourly.precipitation, hour),
         });
     }
-    Ok((samples, iso_hour(&time)))
+    samples
+}
+
+fn pick_hour(grid: &HourlyGrid, want: &str) -> usize {
+    if want.is_empty() {
+        return current_hour(&grid.times);
+    }
+    let needle = want.replace('Z', "");
+    grid.times
+        .iter()
+        .position(|t| {
+            t.replace('Z', "")
+                .starts_with(&needle[..needle.len().min(13)])
+        })
+        .unwrap_or_else(|| current_hour(&grid.times))
+}
+
+/// Move an ISO hour by `delta` hours. When `times` is the model series,
+/// the step stays on those stamps.
+pub fn step_field_time(current: &str, delta: i64, times: &[String]) -> String {
+    if !times.is_empty() {
+        let grid = HourlyGrid {
+            times: times.to_vec(),
+            hours: Vec::new(),
+        };
+        let i = pick_hour(&grid, current);
+        let next = (i as i64 + delta).clamp(0, times.len() as i64 - 1) as usize;
+        return times[next].clone();
+    }
+    shift_iso_hour(current, delta)
+}
+
+pub fn shift_iso_hour(time: &str, delta: i64) -> String {
+    let parsed = chrono::DateTime::parse_from_rfc3339(time)
+        .ok()
+        .map(|t| t.with_timezone(&chrono::Utc))
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(
+                &time.replace('Z', "").replace(' ', "T"),
+                "%Y-%m-%dT%H:%M:%S",
+            )
+            .ok()
+            .map(|t| t.and_utc())
+        })
+        .unwrap_or_else(chrono::Utc::now);
+    (parsed + chrono::Duration::hours(delta))
+        .format("%Y-%m-%dT%H:00:00Z")
+        .to_string()
 }
 
 fn current_hour(times: &[String]) -> usize {
@@ -814,6 +884,19 @@ mod tests {
         assert_eq!(iso_hour("2026-09-10T20:00"), "2026-09-10T20:00:00Z");
         assert_eq!(iso_hour("2026-09-10T20:00:00Z"), "2026-09-10T20:00:00Z");
         assert_eq!(current_hour(&["2026-09-10T00:00".into()]), 0);
+        let series = [
+            "2026-09-10T00:00:00Z".into(),
+            "2026-09-10T01:00:00Z".into(),
+            "2026-09-10T02:00:00Z".into(),
+        ];
+        assert_eq!(
+            step_field_time("2026-09-10T00:00:00Z", 3, &series),
+            "2026-09-10T02:00:00Z"
+        );
+        assert_eq!(
+            shift_iso_hour("2026-09-10T00:00:00Z", 6),
+            "2026-09-10T06:00:00Z"
+        );
     }
 
     #[test]

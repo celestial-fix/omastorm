@@ -98,18 +98,26 @@ FocusScope {
             spacing: 8
             Repeater {
                 model: [
-                    {id: "radar", label: "RADAR"},
                     {id: "weather", label: "WEATHER"},
-                    {id: "aviation", label: "AVIATION"}
+                    {id: "aviation", label: "AVIATION"},
+                    {id: "radar", label: "RADAR"}
                 ]
-                Label {
+                Control {
                     required property var modelData
                     text: modelData.label
-                    font.pixelSize: 10
-                    font.letterSpacing: 1
-                    color: card.session.mode === modelData.id ? card.theme.accent : card.theme.foreground
-                    opacity: card.session.mode === modelData.id ? 1 : .5
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: card.session.setMode(modelData.id) }
+                    implicitHeight: 24
+                    background: Rectangle {
+                        color: card.session.mode === modelData.id ? card.theme.accent : button.hovered ? Qt.alpha(card.theme.accent, .16) : "transparent"
+                        border.width: 1
+                        border.color: card.session.mode === modelData.id ? card.theme.accent : Qt.alpha(card.theme.foreground, .22)
+                    }
+                    contentItem: Label {
+                        text: modelData.label
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        color: card.session.mode === modelData.id ? card.theme.background : card.theme.foreground
+                    }
+                    onClicked: card.session.setMode(modelData.id)
                 }
             }
             Item { Layout.fillWidth: true }

@@ -102,8 +102,10 @@ centre and rasterizes a polar sweep the existing shader draws. Surface is
 is wind, isobar height, and humidity at 925–300 hPa. `set_source` chooses
 `now` (report / `best_match`), `gfs`, `ecmwf`, or `dmc` (MeteoChile
 reports by ICAO). `dmc_wrf_gfs` / `dmc_wrf_ecmwf` are WRF-DMC regional
-forecasts; they need `OMASTORM_METEOCHILE_USER` and
-`OMASTORM_METEOCHILE_TOKEN`. `OMASTORM_FIELDS_URL`
+forecasts; they need MeteoChile credentials from API SOURCES
+(`~/.config/omastorm/sources.json`) or `OMASTORM_METEOCHILE_USER` and
+`OMASTORM_METEOCHILE_TOKEN`. `step_history` walks forecast hours on
+`now` / `gfs` / `ecmwf`. `OMASTORM_FIELDS_URL`
 overrides the API root. Archived mode does not fetch.
 
 ## Historical reports

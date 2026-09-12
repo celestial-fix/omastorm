@@ -111,7 +111,15 @@ box only lists SCEL. In Chile, MeteoChile (DMC) supplies those reports
 in weather and aviation, and WRF-DMC runs driven by GFS or ECMWF in
 weather mode.
 Mode is UI chrome remembered in `state.json`; the engine still speaks
-products and sources. `F1` `F2` `F3` switch modes.
+products and sources. Three highlightable buttons at the top left name
+**WEATHER**, **AVIATION**, and **RADAR**. The next line picks the data
+source (NEXRAD, NOW, GFS, ECMWF, WRF, DMC, CDO, Meteostat). A WRF
+produce line appears only while a WRF source is selected. Time steps
+(1 h / 3 h / 6 h / 12 h, or a CDO day) and altitude sit on one row.
+The variable line is RADAR, WIND, PRES, WATER, TEMP, PRECIP; field
+products may be combined, and the map draws the last one toggled on.
+`API SOURCES` is the credentials sheet (MeteoChile), not a weather
+location control. `F1` `F2` `F3` still switch modes.
 
 A product is a texture, legend, units, timestamp, and source from the engine.
 Level II reflectivity is the radar layer (a report). Live mode also offers

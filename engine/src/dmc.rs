@@ -25,6 +25,48 @@ const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_BODY: usize = 4 << 20;
 const ATTRIBUTION: &str = "Dirección Meteorológica de Chile";
 
+fn meteochile_creds() -> (String, String) {
+    let user = env::var("OMASTORM_METEOCHILE_USER").unwrap_or_default();
+    let token = env::var("OMASTORM_METEOCHILE_TOKEN").unwrap_or_default();
+    if !user.is_empty() && !token.is_empty() {
+        return (user, token);
+    }
+    let path = env::var("OMASTORM_SOURCES")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            env::var("XDG_CONFIG_HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join("omastorm/sources.json"))
+        })
+        .or_else(|| {
+            env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".config/omastorm/sources.json"))
+        });
+    let Some(path) = path else {
+        return (user, token);
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (user, token);
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return (user, token);
+    };
+    (
+        value
+            .get("meteochileUser")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&user)
+            .to_owned(),
+        value
+            .get("meteochileToken")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&token)
+            .to_owned(),
+    )
+}
+
 pub fn is_dmc(id: &str) -> bool {
     matches!(id, "dmc" | "dmc_wrf_gfs" | "dmc_wrf_ecmwf")
 }
@@ -32,8 +74,6 @@ pub fn is_dmc(id: &str) -> bool {
 pub struct Client {
     awc: String,
     modelo: String,
-    user: String,
-    token: String,
     http: reqwest::Client,
 }
 
@@ -50,8 +90,6 @@ impl Client {
         Ok(Client {
             awc: awc.trim_end_matches('/').to_owned(),
             modelo: modelo.trim_end_matches('/').to_owned(),
-            user: env::var("OMASTORM_METEOCHILE_USER").unwrap_or_default(),
-            token: env::var("OMASTORM_METEOCHILE_TOKEN").unwrap_or_default(),
             http,
         })
     }
@@ -103,9 +141,10 @@ impl Client {
     }
 
     async fn load_wrf(&self, lat: f64, lon: f64, source: &str) -> io::Result<Vec<Sample>> {
-        if self.user.is_empty() || self.token.is_empty() {
+        let (user, token) = meteochile_creds();
+        if user.is_empty() || token.is_empty() {
             return Err(io::Error::other(
-                "MeteoChile WRF-DMC needs OMASTORM_METEOCHILE_USER and OMASTORM_METEOCHILE_TOKEN (Servicios Climáticos).",
+                "MeteoChile WRF-DMC needs credentials in API SOURCES or OMASTORM_METEOCHILE_USER / OMASTORM_METEOCHILE_TOKEN.",
             ));
         }
         let (airport, _) = airports::nearest(lat, lon)
@@ -118,7 +157,7 @@ impl Client {
         }
         let url = format!(
             "{}/{}?usuario={}&token={}",
-            self.modelo, airport.dmc_id, self.user, self.token
+            self.modelo, airport.dmc_id, user, token
         );
         let body = self.get_json(&url).await?;
         let driver = if source.ends_with("ecmwf") {

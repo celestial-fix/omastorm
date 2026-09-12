@@ -569,6 +569,7 @@ struct Shared {
     field_center: Option<(f64, f64)>,
     field_source: String,
     field_sel: Option<(String, String, u32)>,
+    field_time: String,
     field_wake: Arc<Notify>,
     wrf_wake: Arc<Notify>,
     gramet_req: Option<gramet::Request>,
@@ -1002,39 +1003,63 @@ impl Shared {
         (true, None)
     }
     fn seek_history(&mut self, time: &str) -> (bool, Option<String>) {
-        if !fields::is_history(&self.field_source) {
-            return (
-                false,
-                Some("History seek needs the CDO or Meteostat source.".into()),
-            );
-        }
         if self.state.source != Source::Live {
-            return (
-                false,
-                Some("CDO and Meteostat records are available in live mode.".into()),
-            );
+            return (false, Some("Time travel is available in live mode.".into()));
         }
-        let time = history::normalize_time(&self.field_source, time);
-        self.state.history = history::loading(&self.field_source, &time);
-        self.history_wake.notify_one();
-        (true, None)
+        if fields::is_history(&self.field_source) {
+            let time = history::normalize_time(&self.field_source, time);
+            self.state.history = history::loading(&self.field_source, &time);
+            self.history_wake.notify_one();
+            return (true, None);
+        }
+        if fields::is_model(&self.field_source) {
+            self.field_time = if time.trim().is_empty() {
+                String::new()
+            } else {
+                fields::shift_iso_hour(time, 0)
+            };
+            self.state.history = protocol::History {
+                status: protocol::AviationStatus::Loading,
+                source: self.field_source.clone(),
+                time: self.field_time.clone(),
+                step: "hour".into(),
+                attribution: self.state.layers.attribution.clone(),
+                stations: Vec::new(),
+                message: String::new(),
+            };
+            self.field_wake.notify_one();
+            return (true, None);
+        }
+        (
+            false,
+            Some("Time step needs a model, CDO, or Meteostat source.".into()),
+        )
     }
     fn step_history(&mut self, delta: i64) -> (bool, Option<String>) {
-        if !fields::is_history(&self.field_source) {
-            return (
-                false,
-                Some("History step needs the CDO or Meteostat source.".into()),
-            );
+        if fields::is_history(&self.field_source) {
+            let time = if self.state.history.time.is_empty() {
+                history::default_time(&self.field_source)
+            } else {
+                self.state.history.time.clone()
+            };
+            return match history::step_time(&self.field_source, &time, delta) {
+                Ok(next) => self.seek_history(&next),
+                Err(message) => (false, Some(message)),
+            };
         }
-        let time = if self.state.history.time.is_empty() {
-            history::default_time(&self.field_source)
-        } else {
-            self.state.history.time.clone()
-        };
-        match history::step_time(&self.field_source, &time, delta) {
-            Ok(next) => self.seek_history(&next),
-            Err(message) => (false, Some(message)),
+        if fields::is_model(&self.field_source) {
+            let current = if self.field_time.is_empty() {
+                self.state.history.time.clone()
+            } else {
+                self.field_time.clone()
+            };
+            let next = fields::step_field_time(&current, delta, &[]);
+            return self.seek_history(&next);
         }
+        (
+            false,
+            Some("Time step needs a model, CDO, or Meteostat source.".into()),
+        )
     }
     /// Keep an empty-station placeholder sited on the view so map scale
     /// follows the place the user chose, not the CONUS centroid.
@@ -1418,7 +1443,7 @@ async fn field_loop(shared: Arc<Mutex<Shared>>, client: Arc<fields::Client>, wak
     loop {
         wake.notified().await;
         sleep(Duration::from_millis(250)).await;
-        let (center, sel) = {
+        let (center, sel, hour) = {
             let shared = shared.lock().unwrap();
             if shared.state.source != Source::Live {
                 continue;
@@ -1427,13 +1452,13 @@ async fn field_loop(shared: Arc<Mutex<Shared>>, client: Arc<fields::Client>, wak
                 (Some(center), Some(sel))
                     if sel.0 != "wrf" && !fields::is_history(&sel.0) && !dmc::is_dmc(&sel.0) =>
                 {
-                    (center, sel)
+                    (center, sel, shared.field_time.clone())
                 }
                 _ => continue,
             }
         };
         match client
-            .fetch(center.0, center.1, &sel.0, &sel.1, sel.2)
+            .fetch(center.0, center.1, &sel.0, &sel.1, sel.2, &hour)
             .await
         {
             Ok((frame, texture, lut)) => {
@@ -1445,6 +1470,12 @@ async fn field_loop(shared: Arc<Mutex<Shared>>, client: Arc<fields::Client>, wak
                     eprintln!("Field layer: {e}");
                     continue;
                 }
+                shared.field_time = shared.state.frame.scan_time.clone();
+                shared.state.history.status = protocol::AviationStatus::Ok;
+                shared.state.history.source = sel.0.clone();
+                shared.state.history.time = shared.field_time.clone();
+                shared.state.history.step = "hour".into();
+                shared.state.history.attribution = shared.state.layers.attribution.clone();
                 shared.broadcast();
             }
             Err(e) => eprintln!("Field layer: {e}"),
@@ -2302,6 +2333,7 @@ fn serve(dir: PathBuf) -> io::Result<()> {
         field_center: None,
         field_source: "nexrad".into(),
         field_sel: None,
+        field_time: String::new(),
         field_wake: field_wake.clone(),
         wrf_wake: wrf_wake.clone(),
         gramet_req: None,
