@@ -220,6 +220,17 @@ Item {
         if (!s || !s.id) return "";
         return s.id === aviationIcao ? s.id + " · PINNED" : s.id;
     }
+    function airportHint(s) {
+        if (!s || !s.id) return "";
+        return s.id === aviationIcao ? "Click to follow the map" : "Click to pin METAR / TAF";
+    }
+    function airportPinned(s) {
+        return !!(s && s.id && s.id === aviationIcao);
+    }
+    function pickAirport(s) {
+        if (!s || !s.id) return;
+        icaoPicked(s.id, Number(s.lat), Number(s.lon));
+    }
     function hazardTitle(h) {
         if (!h) return "";
         var kind = (h.kind || "hazard").toUpperCase();
@@ -711,7 +722,7 @@ Item {
             model: map.airports
             Rectangle {
                 required property var modelData
-                readonly property bool pinned: modelData && modelData.id === map.aviationIcao
+                readonly property bool pinned: map.airportPinned(modelData)
                 x: (map.mercatorX(modelData.lon)-map.siteMx)*map.worldPixels-4
                 y: (map.mercatorY(modelData.lat)-map.siteMy)*map.worldPixels-4
                 width: 8; height: 8
@@ -739,6 +750,8 @@ Item {
                 }
             }
         }
+        Repeater {
+            model: map.siteLabels
             Rectangle {
                 required property var modelData
                 x: modelData.x; y: modelData.y
@@ -837,8 +850,7 @@ Item {
             Text {
                 width: parent.width
                 visible: !!map.hoverAirport
-                text: map.hoverAirport && map.hoverAirport.id === map.aviationIcao
-                      ? "Click to follow the map" : "Click to pin METAR / TAF"
+                text: map.airportHint(map.hoverAirport)
                 color: map.theme.foreground
                 opacity: .75
                 font.family: map.theme.font
@@ -873,7 +885,7 @@ Item {
         onReleased: mouse => {
             map.hoverAt(mouse.x, mouse.y);
             if (!dragged && map.hoverAirport)
-                map.icaoPicked(map.hoverAirport.id, map.hoverAirport.lat, map.hoverAirport.lon);
+                map.pickAirport(map.hoverAirport);
         }
         onExited: { map.hoverLive = false; map.hoverHazard = null; map.hoverAirport = null; }
         onPositionChanged: mouse => {

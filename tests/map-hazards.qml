@@ -66,6 +66,9 @@ ShellRoot {
                     check(map.hoverAirport && map.hoverAirport.id === "SCVM", "hovering the ICAO marker did not pick SCVM");
                     check(!map.hoverHazard, "ICAO hover should win over a polygon under the marker");
                     check(map.airportTitle(map.hoverAirport) === "SCVM", "Airport tooltip title drifted: " + map.airportTitle(map.hoverAirport));
+                    check(map.airportHint(map.hoverAirport) === "Click to pin METAR / TAF",
+                          "Airport click hint drifted: " + map.airportHint(map.hoverAirport));
+                    check(!map.airportPinned(map.hoverAirport), "Unpinned SCVM was treated as pinned");
                     check(map.hoverTip.visible, "Themed tooltip stayed hidden over an ICAO marker");
                     var border = String(map.hoverTip.border.color);
                     check(border.indexOf("eeeeee") >= 0 || border.indexOf("EEEEEE") >= 0 || border === String(map.theme.foreground),
