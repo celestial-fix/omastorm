@@ -38,6 +38,7 @@ var ACTIONS = [
     { id: "layer_water", keys: "6" },
     { id: "layer_temp", keys: "7" },
     { id: "layer_precip", keys: "8" },
+    { id: "source_nexrad", keys: "Shift+N" },
     { id: "source_now", keys: "Shift+O" },
     { id: "source_gfs", keys: "Shift+G" },
     { id: "source_ecmwf", keys: "Shift+E" },
@@ -57,7 +58,7 @@ var ACTIONS = [
 // The sheet's two columns (DESIGN.md). A row of
 // several actions shows each one's first key and names the alternates.
 var ROWS_LEFT = [
-    { label: "radar / weather / aviation", actions: ["mode_radar", "mode_weather", "mode_aviation"] },
+    { label: "weather / aviation / radar", actions: ["mode_weather", "mode_aviation", "mode_radar"] },
     { label: "search sites", actions: ["search"] },
     { label: "nearest radar", actions: ["nearest"] },
     { label: "lock / release radar", actions: ["lock"] },
@@ -79,7 +80,7 @@ var ROWS_WEATHER = [
     { label: "previous / next time", actions: ["previous_frame", "next_frame"] },
     { label: "oldest / newest archive", actions: ["oldest", "newest"] },
     { label: "temperature, precip, wind, pressure, water", actions: ["layer_temp", "layer_precip", "layer_wind", "layer_pressure", "layer_water"] },
-    { label: "now, GFS, ECMWF, DMC, WRF-DMC, CDO, Meteostat", actions: ["source_now", "source_gfs", "source_ecmwf", "source_dmc", "source_dmc_wrf_gfs", "source_dmc_wrf_ecmwf", "source_cdo", "source_meteostat"] },
+    { label: "NEXRAD, now, GFS, ECMWF, DMC, WRF, CDO, Meteostat", actions: ["source_nexrad", "source_now", "source_gfs", "source_ecmwf", "source_dmc", "source_wrf", "source_cdo", "source_meteostat"] },
     { label: "run local WRF", actions: ["run_wrf"] },
     { label: "layer altitude", actions: ["altitude_down", "altitude_up"] },
     { label: "this sheet · esc closes", actions: ["help"] }

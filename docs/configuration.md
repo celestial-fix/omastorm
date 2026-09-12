@@ -11,6 +11,7 @@ engine. The UI sends the commands described in [protocol.md](protocol.md).
 | --- | --- | --- |
 | `~/.config/omastorm/config.toml` | User-managed, deliberate preferences | Optional fixed launch center, radar override, treatment, weak-return floor, keybindings |
 | `$XDG_STATE_HOME/omastorm/state.json` | App-managed, remembered session | Last map center, zoom, and optional radar lock chosen in the UI |
+| `~/.config/omastorm/sources.json` | User-managed API credentials | MeteoChile user and token from the **API SOURCES** sheet. Env vars `OMASTORM_METEOCHILE_USER` / `OMASTORM_METEOCHILE_TOKEN` still win. `OMASTORM_SOURCES` names another file for checks. |
 
 When `XDG_STATE_HOME` is unset, state lives at
 `~/.local/state/omastorm/state.json`. Onboarding, panning, zooming, and UI lock
@@ -120,7 +121,7 @@ the machine's own state and weather files are not read unless
   `next_frame` (`]`), `play` (`Space`), `oldest` (`Home`), `newest` (`End`),
   `pixels` `glyphs` `stipple` (`1 2 3`), `layer_radar` (`Shift+R`),
   `layer_wind` `layer_pressure` `layer_water` (`4 5 6`), `layer_temp`
-  (`7`), `layer_precip` (`8`), `source_now`
+  (`7`), `layer_precip` (`8`), `source_nexrad` (`Shift+N`), `source_now`
   (`Shift+O`), `source_gfs` (`Shift+G`), `source_ecmwf` (`Shift+E`),
   `source_wrf` (`Shift+F`), `source_dmc` (`Shift+D`),
   `source_dmc_wrf_gfs` (`Shift+Y`), `source_dmc_wrf_ecmwf` (`Shift+U`),

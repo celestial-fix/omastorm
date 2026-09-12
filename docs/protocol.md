@@ -295,10 +295,9 @@ when `osm` becomes available. `labels` are the tile's places for the overlay.
   (50–450, default 350). The engine resolves the airports from AWC
   stationinfo and samples Open-Meteo along the great-circle. Archived
   mode rejects it. A bad ICAO or TAS is an `error` to the sender.
-- `seek_history` jumps the CDO / Meteostat cursor to an ISO date or
-  hour. `step_history` moves `delta` days (`cdo`) or hours
-  (`meteostat`) and clamps to the archive window. Both need a history
-  source in live mode.
+- `seek_history` jumps the time cursor to an ISO date or hour.
+  `step_history` moves `delta` days (`cdo`) or hours (Meteostat and
+  Open-Meteo now / GFS / ECMWF). Both need a timed source in live mode.
 - `estimate_wrf` fills `state.wrf.estimate` for the named centre and domain.
   `widthKm` / `heightKm` are the domain sides (the map span is a good
   default). Omit `dxKm` to pick a spacing from the span (3 / 9 / 15 km).

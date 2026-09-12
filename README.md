@@ -36,7 +36,8 @@ client: it displays those textures in the bar popover and full window.
   at Tobalaba, not only SCEL). Search `sctb` in the location picker.
 - **MeteoChile.** Chilean reports and WRF-DMC forecasts (GFS- or
   ECMWF-driven) from the Dirección Meteorológica de Chile. WRF-DMC needs
-  `OMASTORM_METEOCHILE_USER` and `OMASTORM_METEOCHILE_TOKEN`.
+  credentials from **API SOURCES** (or `OMASTORM_METEOCHILE_USER` /
+  `OMASTORM_METEOCHILE_TOKEN`).
 - **Field layers.** In weather (and winds aloft in aviation): wind,
   pressure, water, temperature, and precipitation. Reports stay separate
   from forecasts. MeteoChile observations are available in aviation too.
@@ -106,7 +107,7 @@ cannot be reached, with cached frames kept.
 
 | Key | Action |
 | --- | --- |
-| `F1` `F2` `F3` | Radar, weather, aviation modes |
+| `F1` `F2` `F3` | Radar, weather, aviation modes (buttons: WEATHER, AVIATION, RADAR) |
 | `h` `j` `k` `l` or arrows | Pan |
 | `+` `-` | Zoom |
 | `0` | Reset to the configured or weather location |
@@ -115,11 +116,11 @@ cannot be reached, with cached frames kept.
 | `Shift+L` | Lock the station |
 | `Shift+H` | Choose a location |
 | `Space` | Loop the frames |
-| `[` `]` | Step a frame, or a CDO day / Meteostat hour |
+| `[` `]` | Step a frame, or the selected time step (1h / 3h / 6h / 12h / CDO day) |
 | `Home` `End` | Oldest or newest frame, or the archive window |
 | `1` `2` `3` | Pixels, Glyphs, Stipple |
 | `4` `5` `6` `7` `8` | Wind, pressure, water, temperature, precipitation |
-| `Shift+O` `Shift+G` `Shift+E` `Shift+F` | Now, GFS, ECMWF, WRF sources |
+| `Shift+N` `Shift+O` `Shift+G` `Shift+E` `Shift+F` | NEXRAD, now, GFS, ECMWF, WRF sources |
 | `Shift+D` | MeteoChile reports |
 | `Shift+Y` `Shift+U` | WRF-DMC (GFS / ECMWF drivers) |
 | `Shift+C` `Shift+M` | NOAA CDO and Meteostat archives |
