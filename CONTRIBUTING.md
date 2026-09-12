@@ -82,7 +82,8 @@ rewrite it to match a new decode by accident. Capture scripts write images
 under `review/` for visual review; those stay out of git. Regenerate them when
 the picture changed, and include the captures with the review.
 
-Honor [DESIGN.md](DESIGN.md): actual scan times, chrome from the Omarchy
+Honor [DESIGN.md](DESIGN.md): three modes (radar, weather, aviation), actual
+scan times, chrome from the Omarchy
 theme, radar color only from `frame.palette`. TAF and issued GAMET /
 GRAMET are bulletin text. Route GRAMET is a live origin/destination +
 cruise TAS briefing (text and a polyline), still not a model field.

@@ -21,6 +21,7 @@ QtObject {
     readonly property var span: parsed.span
     readonly property string lock: parsed.lock
     readonly property string name: parsed.name
+    readonly property string mode: parsed.mode || "radar"
     property FileView file: FileView {
         path: root.path
         watchChanges: true
@@ -29,8 +30,8 @@ QtObject {
         onLoaded: { root.parsed = Location.parseState(text()); root.stateRead = true; }
         onLoadFailed: { root.parsed = Location.parseState(""); root.stateRead = true; }
     }
-    function snapshot(viewLat, viewLon, span, lock, name) {
-        var text = JSON.stringify(Location.stateObject(viewLat, viewLon, span, lock, name));
+    function snapshot(viewLat, viewLon, span, lock, name, mode) {
+        var text = JSON.stringify(Location.stateObject(viewLat, viewLon, span, lock, name, mode));
         parsed = Location.parseState(text);
         if (!path) return;
         var slash = path.lastIndexOf("/");

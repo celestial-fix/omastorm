@@ -100,6 +100,14 @@ Write `state.json` atomically. See [configuration](docs/configuration.md) for
 file ownership and precedence. Do not write Omarchy, Hyprland, or system
 configuration.
 
+The window has three modes. **Radar** is the original NEXRAD viewer:
+one station's sweep, the timeline, treatments, and the weak-return floor.
+**Weather** is ordinary history and forecasts: Open-Meteo now, GFS, ECMWF,
+optional local WRF, and NOAA CDO / Meteostat time travel. **Aviation** is
+the briefing tools: METAR, TAF, SIGMET / AIRMET / GAMET polygons, and a
+route GRAMET. Mode is UI chrome remembered in `state.json`; the engine
+still speaks products and sources. `F1` `F2` `F3` switch modes.
+
 A product is a texture, legend, units, timestamp, and source from the engine.
 Level II reflectivity is the radar layer (a report). Live mode also offers
 field layers — wind, pressure, atmospheric water, temperature, and

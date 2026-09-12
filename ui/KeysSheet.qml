@@ -11,10 +11,11 @@ Item {
     id: sheet
     property var theme
     property var bindings: ({})       // action id -> canonical sequences
+    property string mode: "radar"
     property bool compact: false
     property real cardTop: 20         // the map's top edge; the card sits below it
     property bool open: false
-    readonly property var columns: KeyMap.sheet(bindings)
+    readonly property var columns: KeyMap.sheet(bindings, mode)
     readonly property string closeKeys: (bindings.close || []).map(KeyMap.pretty).join(" or ")
     component Word: Text {
         color: sheet.theme.foreground

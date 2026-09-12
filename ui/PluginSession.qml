@@ -33,6 +33,8 @@ QtObject {
     property string lockId: ""
     property bool lockWanted: false
     property string lockSource: ""
+    // Window chrome mode (DESIGN.md): radar, weather, or aviation.
+    property string mode: "radar"
     property string lastConfigLock: ""
     property bool pendingLocationPicker: false
     property var appliedExplicit: null
@@ -65,6 +67,7 @@ QtObject {
                 placeName = "";
             }
             applyLaunchLock(rememberedView);
+            mode = rememberedView && rememberedView.mode ? Location.parseMode(rememberedView.mode) : "radar";
         }
         if (explicit) {
             var same = appliedExplicit && appliedExplicit.lat === explicit.lat && appliedExplicit.lon === explicit.lon;
@@ -118,7 +121,14 @@ QtObject {
 
     function persist() {
         if (!hasView) return;
-        remembered.snapshot(centerLat, centerLon, span, lockWanted ? lockId : "", placeName);
+        remembered.snapshot(centerLat, centerLon, span, lockWanted ? lockId : "", placeName, mode);
+    }
+
+    function setMode(id) {
+        var next = Location.parseMode(id);
+        if (mode === next) return;
+        mode = next;
+        if (hasView) persist();
     }
 
     function rememberView(lat, lon, spanKm) {

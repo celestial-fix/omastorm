@@ -27,15 +27,17 @@ client: it displays those textures in the bar popover and full window.
 - **Every site.** Pan the map and it follows the nearest station in range, or
   search by id, city, or country. Places worldwide, including Santiago,
   search; outside the NEXRAD footprint the map stands without a distant sweep.
-- **Aviation briefing.** Live METAR, TAF, SIGMET, AIRMET, and GAMET for
-  the view, from NOAA's Aviation Weather Center, plus a route GRAMET from
-  origin and destination ICAO and cruise TAS. Hazard polygons and the
-  route track draw on the map.
-- **Field layers.** Live wind, pressure, water, temperature, and
-  precipitation. Reports (NEXRAD, Open-Meteo now, NOAA CDO, Meteostat)
-  stay separate from forecasts (GFS, ECMWF IFS, optional local WRF).
-  CDO and Meteostat travel in time by day or hour.
-- **Timeline.** Up to 60 scans per station, cached locally. Play, step, scrub.
+- **Three modes.** Radar is the original NEXRAD viewer. Weather is
+  history and forecasts (Open-Meteo, GFS, ECMWF, CDO, Meteostat, optional
+  WRF). Aviation is METAR, TAF, SIGMET / AIRMET / GAMET, and route GRAMET.
+- **Aviation briefing.** In aviation mode, live METAR, TAF, SIGMET, AIRMET,
+  and GAMET for the view, plus a route GRAMET from origin and destination
+  ICAO and cruise TAS. Hazard polygons and the route track draw on the map.
+- **Field layers.** In weather (and winds aloft in aviation): wind,
+  pressure, water, temperature, and precipitation. Reports stay separate
+  from forecasts. CDO and Meteostat travel in time by day or hour.
+- **Timeline.** In radar mode, up to 60 scans per station, cached locally.
+  Play, step, scrub.
 - **Three treatments.** Glyphs, Pixels, and Stipple sample the same gate and
   paint the cell differently.
 - **Native.** Colors, font, and spacing come from the active Omarchy theme and
@@ -99,6 +101,7 @@ cannot be reached, with cached frames kept.
 
 | Key | Action |
 | --- | --- |
+| `F1` `F2` `F3` | Radar, weather, aviation modes |
 | `h` `j` `k` `l` or arrows | Pan |
 | `+` `-` | Zoom |
 | `0` | Reset to the configured or weather location |
@@ -127,7 +130,7 @@ are hidden by default and the legend says so; `w` shows them.
 ## Configuration
 
 `~/.config/omastorm/config.toml` holds deliberate preferences. The app saves
-last map center, zoom, and UI radar lock separately in
+last map center, zoom, UI radar lock, and mode separately in
 `$XDG_STATE_HOME/omastorm/state.json` (default
 `~/.local/state/omastorm/state.json`). Navigation never rewrites your config.
 `Shift+H`, or LOCATION, opens the location picker; it writes state, not config.
