@@ -237,7 +237,6 @@ Item {
         return h.hazard ? kind + " · " + String(h.hazard).toUpperCase() : kind;
     }
     onHazardsChanged: if (hoverLive) hoverAt(hoverX, hoverY)
-    onAirportsChanged: if (hoverLive) hoverAt(hoverX, hoverY)
 
     // Tile layer (DESIGN.md, basemap tiles). The zoom whose 512 px tiles land
     // nearest 1:1 on screen is requested for the visible rectangle when the
@@ -399,7 +398,7 @@ Item {
     property var airportLabels: []
     onSitesChanged: scheduleLayout()
     onSiteIdChanged: scheduleLayout()
-    onAirportsChanged: scheduleLayout()
+    onAirportsChanged: { scheduleLayout(); if (hoverLive) hoverAt(hoverX, hoverY); }
     onAviationIcaoChanged: scheduleLayout()
     onWidthChanged: { scheduleLayout(); settle.restart(); }
     onHeightChanged: { scheduleLayout(); settle.restart(); }
