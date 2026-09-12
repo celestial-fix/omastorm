@@ -116,20 +116,40 @@ impl Client {
     async fn load(&self, lat: f64, lon: f64) -> io::Result<Aviation> {
         let metar_bbox = bbox(lat, lon, METAR_HALF_DEG);
         let hazard_bbox = bbox(lat, lon, HAZARD_HALF_DEG);
-        let metars = self
-            .get_json(&format!("/metar?bbox={metar_bbox}&format=json"))
-            .await?;
-        let mut station = None;
+        let stations = self
+            .get_json(&format!("/stationinfo?bbox={metar_bbox}&format=json"))
+            .await
+            .unwrap_or_else(|_| serde_json::json!([]));
+        let identified = nearest_airport(&stations, lat, lon).or_else(|| {
+            crate::airports::nearest(lat, lon).map(|(a, km)| Identified {
+                icao: a.icao.into(),
+                name: a.name.into(),
+                lat: a.lat,
+                lon: a.lon,
+                distance_km: km,
+            })
+        });
         let mut metar = None;
-        if let Some(nearest) = nearest_metar(&metars, lat, lon) {
-            station = Some(crate::protocol::AviationStation {
-                id: nearest.icao_id.clone(),
-                lat: nearest.lat,
-                lon: nearest.lon,
-                distance_km: great_circle_km(lat, lon, nearest.lat, nearest.lon),
-            });
-            metar = Some(bulletin_from_metar(&nearest));
+        if let Some(id) = identified.as_ref().map(|s| s.icao.clone())
+            && let Ok(body) = self.get_json(&format!("/metar?ids={id}&format=json")).await
+        {
+            metar = nearest_metar(&body, lat, lon).map(|m| bulletin_from_metar(&m));
         }
+        if metar.is_none() {
+            let metars = self
+                .get_json(&format!("/metar?bbox={metar_bbox}&format=json"))
+                .await?;
+            metar = nearest_metar(&metars, lat, lon).map(|m| bulletin_from_metar(&m));
+        }
+        let station = identified
+            .as_ref()
+            .map(|s| crate::protocol::AviationStation {
+                id: s.icao.clone(),
+                name: s.name.clone(),
+                lat: s.lat,
+                lon: s.lon,
+                distance_km: s.distance_km,
+            });
         let taf = match station.as_ref() {
             Some(s) => {
                 let body = self
@@ -155,14 +175,19 @@ impl Client {
             }
         }
         hazards.retain(|h| hazard_near(h, lat, lon));
-        let status = if metar.is_none() && hazards.is_empty() {
+        let status = if station.is_none() && metar.is_none() && hazards.is_empty() {
             AviationStatus::Unavailable
         } else {
             AviationStatus::Ok
         };
+        let attribution = if crate::airports::in_chile(lat, lon) {
+            format!("{ATTRIBUTION} · Dirección Meteorológica de Chile")
+        } else {
+            ATTRIBUTION.into()
+        };
         Ok(Aviation {
             status,
-            attribution: ATTRIBUTION.into(),
+            attribution,
             station,
             metar,
             taf,
@@ -204,6 +229,46 @@ fn great_circle_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let (dp, dl) = ((lat2 - lat1).to_radians(), (lon2 - lon1).to_radians());
     let h = (dp / 2.0).sin().powi(2) + p1.cos() * p2.cos() * (dl / 2.0).sin().powi(2);
     2.0 * 6371.0 * h.clamp(0.0, 1.0).sqrt().asin()
+}
+
+struct Identified {
+    icao: String,
+    name: String,
+    lat: f64,
+    lon: f64,
+    distance_km: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StationInfo {
+    #[serde(default)]
+    icao_id: String,
+    #[serde(default)]
+    site: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    lat: f64,
+    #[serde(default)]
+    lon: f64,
+}
+
+fn nearest_airport(value: &serde_json::Value, lat: f64, lon: f64) -> Option<Identified> {
+    as_records::<StationInfo>(value)
+        .into_iter()
+        .filter(|s| s.icao_id.len() == 4 && s.lat.abs() <= 90.0 && s.lon.abs() <= 180.0)
+        .map(|s| {
+            let name = if !s.site.is_empty() { s.site } else { s.name };
+            Identified {
+                distance_km: great_circle_km(lat, lon, s.lat, s.lon),
+                icao: s.icao_id,
+                name,
+                lat: s.lat,
+                lon: s.lon,
+            }
+        })
+        .min_by(|a, b| a.distance_km.total_cmp(&b.distance_km))
 }
 
 #[derive(Deserialize)]
@@ -432,6 +497,28 @@ fn iso_from_awc(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tobalaba_identifies_sctb_even_when_only_scel_has_a_live_metar() {
+        let stations = serde_json::json!([
+            {
+                "icaoId": "SCEL",
+                "site": "Santiago/Benítez Intl",
+                "lat": -33.393,
+                "lon": -70.786
+            },
+            {
+                "icaoId": "SCTB",
+                "site": "Santiago/Sanchez Arpt",
+                "lat": -33.456,
+                "lon": -70.547
+            }
+        ]);
+        let found = nearest_airport(&stations, -33.45, -70.55).unwrap();
+        assert_eq!(found.icao, "SCTB");
+        assert!(found.name.contains("Sanchez"));
+        assert!(found.distance_km < 8.0);
+    }
 
     #[test]
     fn santiago_metar_is_the_nearest_in_the_box() {

@@ -42,6 +42,9 @@ var ACTIONS = [
     { id: "source_gfs", keys: "Shift+G" },
     { id: "source_ecmwf", keys: "Shift+E" },
     { id: "source_wrf", keys: "Shift+F" },
+    { id: "source_dmc", keys: "Shift+D" },
+    { id: "source_dmc_wrf_gfs", keys: "Shift+Y" },
+    { id: "source_dmc_wrf_ecmwf", keys: "Shift+U" },
     { id: "source_cdo", keys: "Shift+C" },
     { id: "source_meteostat", keys: "Shift+M" },
     { id: "run_wrf", keys: "Shift+W" },
@@ -76,7 +79,7 @@ var ROWS_WEATHER = [
     { label: "previous / next time", actions: ["previous_frame", "next_frame"] },
     { label: "oldest / newest archive", actions: ["oldest", "newest"] },
     { label: "temperature, precip, wind, pressure, water", actions: ["layer_temp", "layer_precip", "layer_wind", "layer_pressure", "layer_water"] },
-    { label: "now, GFS, ECMWF, WRF, CDO, Meteostat", actions: ["source_now", "source_gfs", "source_ecmwf", "source_wrf", "source_cdo", "source_meteostat"] },
+    { label: "now, GFS, ECMWF, DMC, WRF-DMC, CDO, Meteostat", actions: ["source_now", "source_gfs", "source_ecmwf", "source_dmc", "source_dmc_wrf_gfs", "source_dmc_wrf_ecmwf", "source_cdo", "source_meteostat"] },
     { label: "run local WRF", actions: ["run_wrf"] },
     { label: "layer altitude", actions: ["altitude_down", "altitude_up"] },
     { label: "this sheet · esc closes", actions: ["help"] }

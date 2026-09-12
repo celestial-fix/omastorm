@@ -32,10 +32,15 @@ client: it displays those textures in the bar popover and full window.
   WRF). Aviation is METAR, TAF, SIGMET / AIRMET / GAMET, and route GRAMET.
 - **Aviation briefing.** In aviation mode, live METAR, TAF, SIGMET, AIRMET,
   and GAMET for the view, plus a route GRAMET from origin and destination
-  ICAO and cruise TAS. Hazard polygons and the route track draw on the map.
+  ICAO and cruise TAS. The nearest aerodrome is identified by ICAO (SCTB
+  at Tobalaba, not only SCEL). Search `sctb` in the location picker.
+- **MeteoChile.** Chilean reports and WRF-DMC forecasts (GFS- or
+  ECMWF-driven) from the Dirección Meteorológica de Chile. WRF-DMC needs
+  `OMASTORM_METEOCHILE_USER` and `OMASTORM_METEOCHILE_TOKEN`.
 - **Field layers.** In weather (and winds aloft in aviation): wind,
   pressure, water, temperature, and precipitation. Reports stay separate
-  from forecasts. CDO and Meteostat travel in time by day or hour.
+  from forecasts. MeteoChile observations are available in aviation too.
+  CDO and Meteostat travel in time by day or hour.
 - **Timeline.** In radar mode, up to 60 scans per station, cached locally.
   Play, step, scrub.
 - **Three treatments.** Glyphs, Pixels, and Stipple sample the same gate and
@@ -115,6 +120,8 @@ cannot be reached, with cached frames kept.
 | `1` `2` `3` | Pixels, Glyphs, Stipple |
 | `4` `5` `6` `7` `8` | Wind, pressure, water, temperature, precipitation |
 | `Shift+O` `Shift+G` `Shift+E` `Shift+F` | Now, GFS, ECMWF, WRF sources |
+| `Shift+D` | MeteoChile reports |
+| `Shift+Y` `Shift+U` | WRF-DMC (GFS / ECMWF drivers) |
 | `Shift+C` `Shift+M` | NOAA CDO and Meteostat archives |
 | `Shift+A` | Route GRAMET (origin, destination, TAS) |
 | `Shift+W` | Run local WRF (after the time estimate) |

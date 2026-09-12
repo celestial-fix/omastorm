@@ -234,7 +234,11 @@ impl Client {
     async fn airport(&self, icao: &str) -> io::Result<GrametFix> {
         let url = format!("{}/stationinfo?ids={icao}&format=json", self.aviation);
         let value = self.get_json(&url).await?;
-        parse_airport(&value, icao)
+        if let Some(fix) = parse_airport(&value, icao) {
+            return Ok(fix);
+        }
+        crate::airports::lookup(icao)
+            .map(crate::airports::as_fix)
             .ok_or_else(|| io::Error::other(format!("no AWC stationinfo for {icao}")))
     }
 

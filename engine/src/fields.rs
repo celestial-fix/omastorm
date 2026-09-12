@@ -106,7 +106,7 @@ pub struct Source {
     pub model: &'static str,
 }
 
-pub const SOURCES: [Source; 7] = [
+pub const SOURCES: [Source; 10] = [
     Source {
         id: "nexrad",
         name: "NEXRAD",
@@ -141,6 +141,27 @@ pub const SOURCES: [Source; 7] = [
         kind: "local",
         group: "forecast",
         model: "wrf",
+    },
+    Source {
+        id: "dmc",
+        name: "MeteoChile",
+        kind: "analysis",
+        group: "report",
+        model: "",
+    },
+    Source {
+        id: "dmc_wrf_gfs",
+        name: "WRF-DMC GFS",
+        kind: "model",
+        group: "forecast",
+        model: "wrf_dmc_gfs",
+    },
+    Source {
+        id: "dmc_wrf_ecmwf",
+        name: "WRF-DMC ECMWF",
+        kind: "model",
+        group: "forecast",
+        model: "wrf_dmc_ecmwf",
     },
     Source {
         id: "cdo",
@@ -762,12 +783,24 @@ mod tests {
                 .iter()
                 .map(|s| s.id.as_str())
                 .collect::<Vec<_>>(),
-            ["nexrad", "now", "gfs", "ecmwf", "wrf", "cdo", "meteostat"]
+            [
+                "nexrad",
+                "now",
+                "gfs",
+                "ecmwf",
+                "wrf",
+                "dmc",
+                "dmc_wrf_gfs",
+                "dmc_wrf_ecmwf",
+                "cdo",
+                "meteostat"
+            ]
         );
         assert_eq!(
             groups,
             [
-                "report", "report", "forecast", "forecast", "forecast", "report", "report"
+                "report", "report", "forecast", "forecast", "forecast", "report", "forecast",
+                "forecast", "report", "report"
             ]
         );
         let wind = layers.products.iter().find(|p| p.code == "WIND").unwrap();

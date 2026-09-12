@@ -122,7 +122,9 @@ the machine's own state and weather files are not read unless
   `layer_wind` `layer_pressure` `layer_water` (`4 5 6`), `layer_temp`
   (`7`), `layer_precip` (`8`), `source_now`
   (`Shift+O`), `source_gfs` (`Shift+G`), `source_ecmwf` (`Shift+E`),
-  `source_wrf` (`Shift+F`), `source_cdo` (`Shift+C`),
+  `source_wrf` (`Shift+F`), `source_dmc` (`Shift+D`),
+  `source_dmc_wrf_gfs` (`Shift+Y`), `source_dmc_wrf_ecmwf` (`Shift+U`),
+  `source_cdo` (`Shift+C`),
   `source_meteostat` (`Shift+M`), `run_wrf` (`Shift+W`), `gramet`
   (`Shift+A`), `altitude_down`
   `altitude_up` (`Shift+[` `Shift+]`), `weak` (`w`), `help` (`?`), `close`

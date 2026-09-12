@@ -97,11 +97,12 @@ Item {
         if (aviation.status === "offline") return "AVIATION · OFFLINE";
         if (aviation.status === "unavailable") return "AVIATION · NO BULLETIN";
         var id = aviation.station ? aviation.station.id : "";
+        var name = aviation.station && aviation.station.name ? " " + aviation.station.name : "";
         var cat = aviation.metar && aviation.metar.category ? aviation.metar.category + " · " : "";
         var raw = aviation.metar ? aviation.metar.raw : "";
         var n = aviation.hazards ? aviation.hazards.length : 0;
         var hazards = n ? " · " + n + " HAZARD" + (n === 1 ? "" : "S") : "";
-        return (id ? id + " · " : "") + cat + (raw || "BRIEFING") + hazards;
+        return (id ? id + name + " · " : "") + cat + (raw || "BRIEFING") + hazards;
     }
     readonly property string grametLine: {
         if (!gramet || gramet.status === "idle") return "";
@@ -281,6 +282,9 @@ Item {
         case "source_gfs": if (!aviationMode) setMode("weather", true); setSource("gfs"); break;
         case "source_ecmwf": if (!aviationMode) setMode("weather", true); setSource("ecmwf"); break;
         case "source_wrf": setMode("weather", true); setSource("wrf"); break;
+        case "source_dmc": if (!aviationMode) setMode("weather", true); setSource("dmc"); break;
+        case "source_dmc_wrf_gfs": setMode("weather", true); setSource("dmc_wrf_gfs"); break;
+        case "source_dmc_wrf_ecmwf": setMode("weather", true); setSource("dmc_wrf_ecmwf"); break;
         case "source_cdo": setMode("weather", true); setSource("cdo"); break;
         case "source_meteostat": setMode("weather", true); setSource("meteostat"); break;
         case "run_wrf": setMode("weather", true); runWrf(); break;
@@ -603,7 +607,9 @@ Item {
                 Layout.fillWidth: true
                 LabelText {
                     text: app.radarMode ? (app.siteId || "—")
-                        : app.aviationMode && app.aviation && app.aviation.station ? app.aviation.station.id
+                        : app.aviationMode && app.aviation && app.aviation.station
+                            ? app.aviation.station.id + (app.aviation.station.name ? " · " + String(app.aviation.station.name).toUpperCase() : "")
+                        : app.aviationMode ? "AVIATION"
                         : (app.store.placeName || "WEATHER").toUpperCase()
                     font.pixelSize: app.theme.baseSize + 7; font.bold: true
                 }
@@ -701,11 +707,15 @@ Item {
                     model: app.aviationMode ? [
                         {id: "now", label: "NOW", group: "report", key: "source_now"},
                         {id: "gfs", label: "GFS", group: "forecast", key: "source_gfs"},
-                        {id: "ecmwf", label: "ECMWF", group: "forecast", key: "source_ecmwf"}
+                        {id: "ecmwf", label: "ECMWF", group: "forecast", key: "source_ecmwf"},
+                        {id: "dmc", label: "DMC", group: "report", key: "source_dmc"}
                     ] : [
                         {id: "now", label: "NOW", group: "report", key: "source_now"},
                         {id: "gfs", label: "GFS", group: "forecast", key: "source_gfs"},
                         {id: "ecmwf", label: "ECMWF", group: "forecast", key: "source_ecmwf"},
+                        {id: "dmc", label: "DMC", group: "report", key: "source_dmc"},
+                        {id: "dmc_wrf_gfs", label: "WRF·GFS", group: "forecast", key: "source_dmc_wrf_gfs"},
+                        {id: "dmc_wrf_ecmwf", label: "WRF·IFS", group: "forecast", key: "source_dmc_wrf_ecmwf"},
                         {id: "wrf", label: "WRF", group: "forecast", key: "source_wrf"},
                         {id: "cdo", label: "CDO", group: "report", key: "source_cdo"},
                         {id: "meteostat", label: "METEOSTAT", group: "report", key: "source_meteostat"}

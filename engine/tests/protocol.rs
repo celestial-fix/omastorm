@@ -148,8 +148,9 @@ fn fixture_transport_and_shared_commands() {
     assert_eq!(initial["layers"]["products"][1]["code"], "WIND");
     assert_eq!(initial["layers"]["products"][4]["code"], "TEMP");
     assert_eq!(initial["layers"]["sources"][4]["id"], "wrf");
-    assert_eq!(initial["layers"]["sources"][5]["id"], "cdo");
-    assert_eq!(initial["layers"]["sources"][6]["id"], "meteostat");
+    assert_eq!(initial["layers"]["sources"][5]["id"], "dmc");
+    assert_eq!(initial["layers"]["sources"][8]["id"], "cdo");
+    assert_eq!(initial["layers"]["sources"][9]["id"], "meteostat");
     assert_eq!(initial["wrf"]["status"], "idle");
     assert_eq!(initial["aviation"]["gramet"]["status"], "idle");
     assert_eq!(initial["history"]["status"], "idle");

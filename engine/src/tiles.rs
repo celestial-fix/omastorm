@@ -486,10 +486,34 @@ pub fn search_places(query: &str, origin: Option<(f64, f64)>, limit: usize) -> V
             .then(a.2.cmp(&b.2))
             .then(a.3.name.cmp(&b.3.name))
     });
-    scored
+    let mut labels: Vec<Label> = scored
         .into_iter()
         .take(limit)
         .map(|(_, _, _, place)| place.label())
+        .collect();
+    labels.splice(0..0, icao_matches(&needle, origin, limit));
+    labels.truncate(limit);
+    labels
+}
+
+fn icao_matches(needle: &str, _origin: Option<(f64, f64)>, limit: usize) -> Vec<Label> {
+    if needle.len() < 3 || needle.len() > 4 || !needle.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Vec::new();
+    }
+    let code = needle.to_ascii_uppercase();
+    crate::airports::CHILE
+        .iter()
+        .filter(|a| a.icao.starts_with(&code) || (!a.iata.is_empty() && a.iata.starts_with(&code)))
+        .take(limit)
+        .map(|a| Label {
+            name: format!("{} · {}", a.icao, a.name),
+            lat: a.lat,
+            lon: a.lon,
+            class: "town".into(),
+            rank: 4,
+            region: String::new(),
+            country: "CL".into(),
+        })
         .collect()
 }
 
@@ -806,6 +830,9 @@ mod tests {
         let stokesdale = search_places("stokesdale", None, 4);
         assert_eq!(stokesdale[0].name, "Stokesdale");
         assert_eq!(stokesdale[0].region, "North Carolina");
+        let sctb = search_places("sctb", Some((-33.45, -70.55)), 4);
+        assert!(sctb[0].name.starts_with("SCTB"), "{}", sctb[0].name);
+        assert_eq!(sctb[0].country, "CL");
         let santiago = search_places("santiago", Some((-33.45, -70.67)), 8);
         assert_eq!(santiago[0].name, "Santiago");
         assert_eq!(santiago[0].country, "CL");
