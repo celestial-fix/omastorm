@@ -3,6 +3,7 @@ Config 1.0 Config.qml
 Engine 1.0 Engine.qml
 LocationPicker 1.0 LocationPicker.qml
 GrametPicker 1.0 GrametPicker.qml
+IcaoPicker 1.0 IcaoPicker.qml
 WeatherPicker 1.0 WeatherPicker.qml
 Remembered 1.0 Remembered.qml
 KeysSheet 1.0 KeysSheet.qml
